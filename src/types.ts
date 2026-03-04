@@ -47,3 +47,7 @@ export interface ClaudeAnalysis {
   sugestoes: Suggestion[];
   comentario_geral: string;
 }
+
+export type MRAnalysisResult =
+  | { status: 'fulfilled'; mr: MergeRequest; analysis: ClaudeAnalysis }
+  | { status: 'rejected';  mr: MergeRequest; error: string };

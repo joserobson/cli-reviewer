@@ -83,6 +83,54 @@ export function displayAnalysis(mr: MergeRequest, analysis: ClaudeAnalysis): voi
   console.log(chalk.dim(`  🔗 ${mr.web_url}\n`));
 }
 
+export function createParallelProgressDisplay(labels: string[]): {
+  update(index: number, state: 'running' | 'done' | 'error', detail?: string): void;
+  stop(): void;
+} {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const states: Array<{ state: 'running' | 'done' | 'error'; detail: string }> =
+    labels.map(() => ({ state: 'running', detail: 'aguardando...' }));
+
+  let tick = 0;
+  let firstRender = true;
+
+  function render() {
+    if (!firstRender) {
+      process.stdout.write(`\x1B[${labels.length}A`);
+    }
+    firstRender = false;
+
+    for (let i = 0; i < labels.length; i++) {
+      const { state, detail } = states[i];
+      const frame = frames[(tick + i) % frames.length];
+      const spinner =
+        state === 'running' ? chalk.cyan(frame)
+        : state === 'done'  ? chalk.green('✓')
+        :                     chalk.red('✗');
+      const badge =
+        state === 'running' ? chalk.dim(detail)
+        : state === 'done'  ? chalk.green(detail)
+        :                     chalk.red(detail);
+      const label = labels[i].length > 40 ? labels[i].slice(0, 37) + '…' : labels[i].padEnd(40);
+      process.stdout.write(`  ${spinner} ${label}  ${badge}\n`);
+    }
+    tick++;
+  }
+
+  render();
+  const id = setInterval(render, 80);
+
+  return {
+    update(index, state, detail = '') {
+      states[index] = { state, detail };
+    },
+    stop() {
+      clearInterval(id);
+      render();
+    },
+  };
+}
+
 // Spinner simples sem dependências extras
 export function createSpinner(text: string) {
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

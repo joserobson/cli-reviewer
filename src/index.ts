@@ -6,8 +6,8 @@ import prompts from 'prompts';
 
 import { listOpenMergeRequests, getMergeRequestChanges, approveMergeRequest, postComment, mergeMergeRequest } from './gitlab';
 import { analyzeMergeRequest, type AIProvider } from './ai';
-import { displayBanner, displayAnalysis, createSpinner } from './display';
-import type { MergeRequest, ProjectType } from './types';
+import { displayBanner, displayAnalysis, createSpinner, createParallelProgressDisplay } from './display';
+import type { MergeRequest, ProjectType, MRAnalysisResult } from './types';
 
 // ─── Configuração dos projetos ────────────────────────────────────────────────
 
@@ -129,155 +129,145 @@ async function main(): Promise<void> {
       break;
     }
 
-    // ── 4. Selecionar MR ─────────────────────────────────────────────────────
-    const { mrIid } = (await prompts(
+    // ── 4. Selecionar MR(s) ──────────────────────────────────────────────────
+    const { selectedIids } = (await prompts(
       {
-        type: 'select',
-        name: 'mrIid',
-        message: 'Selecione o Merge Request para analisar:',
-        choices: [
-          ...mrs.map(mr => ({
-            title:
-              chalk.bold(`#${mr.iid}`) +
-              (mr.draft ? chalk.dim(' [DRAFT]') : '') +
-              `  ${mr.title.length > 44 ? mr.title.slice(0, 41) + '…' : mr.title}` +
-              chalk.dim(`  — @${mr.author.username}, ${relativeDate(mr.updated_at)}`),
-            value: mr.iid,
-          })),
-          {
-            title: chalk.dim('↩   Sair'),
-            value: -1,
-          },
-        ],
+        type: 'multiselect',
+        name: 'selectedIids',
+        message: 'Selecione os MRs para analisar (Espaço = marcar, Enter = confirmar):',
+        choices: mrs.map(mr => ({
+          title:
+            chalk.bold(`#${mr.iid}`) +
+            (mr.draft ? chalk.dim(' [DRAFT]') : '') +
+            `  ${mr.title.length > 44 ? mr.title.slice(0, 41) + '…' : mr.title}` +
+            chalk.dim(`  — @${mr.author.username}, ${relativeDate(mr.updated_at)}`),
+          value: mr.iid,
+        })),
+        hint: '– Espaço para marcar, Enter para confirmar, Ctrl+C para sair',
       },
       { onCancel: () => process.exit(0) },
-    )) as { mrIid: number };
+    )) as { selectedIids: number[] };
 
-    if (mrIid === -1) break;
+    if (!selectedIids || selectedIids.length === 0) break;
 
-    const selectedMR = mrs.find(mr => mr.iid === mrIid)!;
+    const selectedMRs = mrs.filter(mr => selectedIids.includes(mr.iid));
 
-    // ── 5. Buscar diff ───────────────────────────────────────────────────────
-    const diffSpin = createSpinner('Buscando alterações do MR...');
-    let mrDetail: Awaited<ReturnType<typeof getMergeRequestChanges>>;
+    // ── 5. Buscar diffs e analisar em paralelo ───────────────────────────────
+    console.log(chalk.bold(`\n  Analisando ${selectedMRs.length} MR(s) em paralelo...\n`));
 
-    try {
-      mrDetail = await getMergeRequestChanges(projectId, mrIid);
-      diffSpin.stop(`  ${chalk.green('✓')} ${mrDetail.changes.length} arquivo(s) alterado(s)\n`);
-    } catch (err) {
-      diffSpin.stop();
-      console.error(chalk.red(`\n  ❌ ${err instanceof Error ? err.message : err}\n`));
-      continue;
+    const progress = createParallelProgressDisplay(
+      selectedMRs.map(mr => `#${mr.iid}  ${mr.title.length > 36 ? mr.title.slice(0, 33) + '…' : mr.title}`),
+    );
+
+    async function fetchAndAnalyze(mr: MergeRequest, index: number): Promise<import('./types').ClaudeAnalysis> {
+      progress.update(index, 'running', 'buscando diff...');
+      const mrDetail = await getMergeRequestChanges(projectId, mr.iid);
+
+      if (mrDetail.changes.length === 0) {
+        throw new Error('MR sem alterações de código');
+      }
+
+      progress.update(index, 'running', `analisando com ${providerName}...`);
+      const analysis = await analyzeMergeRequest(provider, projectType, mr, mrDetail.changes);
+      progress.update(index, 'done', 'concluído!');
+      return analysis;
     }
 
-    if (mrDetail.changes.length === 0) {
-      console.log(chalk.yellow('  Este MR não possui alterações de código.\n'));
-      continue;
-    }
+    const settled = await Promise.allSettled(
+      selectedMRs.map((mr, i) => fetchAndAnalyze(mr, i)),
+    );
 
-    // ── 6. Analisar com o CLI escolhido ──────────────────────────────────────
-    const analyzeSpin = createSpinner(`Analisando com ${providerName} (aguarde)...`);
-    let analysis: Awaited<ReturnType<typeof analyzeMergeRequest>>;
-
-    try {
-      analysis = await analyzeMergeRequest(provider, projectType, selectedMR, mrDetail.changes);
-      analyzeSpin.stop(`  ${chalk.green('✓')} Análise concluída!\n`);
-    } catch (err) {
-      analyzeSpin.stop();
-      console.error(chalk.red(`\n  ❌ ${err instanceof Error ? err.message : err}\n`));
-      continue;
-    }
-
-    // ── 7. Exibir análise ────────────────────────────────────────────────────
-    displayAnalysis(selectedMR, analysis);
-
-    // ── 8. Ação do usuário ───────────────────────────────────────────────────
-    const { action } = (await prompts(
-      {
-        type: 'select',
-        name: 'action',
-        message: 'O que deseja fazer?',
-        choices: [
-          {
-            title: chalk.green('✅  Aprovar o MR no GitLab'),
-            description: 'Aprova via GitLab API',
-            value: 'approve',
-          },
-          {
-            title: chalk.bold.green('✅🔀 Aprovar E fazer merge na develop'),
-            description: 'Aprova e dispara o merge (executa quando o pipeline passar)',
-            value: 'approve-merge',
-          },
-          {
-            title: chalk.red('❌  Reprovar — postar análise como comentário no MR'),
-            description: 'Posta o relatório no MR e não aprova',
-            value: 'comment',
-          },
-          {
-            title: chalk.green('✅  Aprovar E postar análise no MR'),
-            description: 'Aprova e registra o relatório para a equipe',
-            value: 'both',
-          },
-          {
-            title: chalk.bold.green('✅💬🔀 Aprovar, postar análise E fazer merge'),
-            description: 'Aprova, posta o relatório e dispara o merge na develop',
-            value: 'both-merge',
-          },
-          {
-            title: chalk.dim('↩   Voltar à lista de MRs'),
-            value: 'skip',
-          },
-        ],
-      },
-      { onCancel: () => process.exit(0) },
-    )) as { action: 'approve' | 'approve-merge' | 'comment' | 'both' | 'both-merge' | 'skip' };
-
+    progress.stop();
     console.log();
 
-    // ── 9. Executar ──────────────────────────────────────────────────────────
-    const shouldApprove = action === 'approve' || action === 'approve-merge' || action === 'both' || action === 'both-merge';
-    const shouldComment = action === 'comment' || action === 'both' || action === 'both-merge';
-    const shouldMerge   = action === 'approve-merge' || action === 'both-merge';
-
-    if (shouldApprove) {
-      const spin = createSpinner('Aprovando MR no GitLab...');
-      try {
-        await approveMergeRequest(projectId, mrIid);
-        spin.stop(`  ${chalk.green(`✅ MR #${mrIid} aprovado com sucesso!`)}`);
-      } catch (err) {
-        spin.stop();
-        console.error(chalk.red(`  ❌ Erro ao aprovar: ${err instanceof Error ? err.message : err}`));
+    const results: MRAnalysisResult[] = settled.map((s, i) => {
+      const mr = selectedMRs[i];
+      if (s.status === 'fulfilled') {
+        return { status: 'fulfilled', mr, analysis: s.value };
       }
-    }
+      const reason = s.reason;
+      return { status: 'rejected', mr, error: reason instanceof Error ? reason.message : String(reason) };
+    });
 
-    if (shouldComment) {
-      const spin = createSpinner('Postando análise no GitLab...');
-      try {
-        const commentBody = `@${selectedMR.author.username}\n\n${analysis.comentario_geral}`;
-        await postComment(projectId, mrIid, commentBody);
-        spin.stop(`  ${chalk.yellow(`💬 Análise postada como comentário no MR #${mrIid}`)}`);
-      } catch (err) {
-        spin.stop();
-        console.error(chalk.red(`  ❌ Erro ao comentar: ${err instanceof Error ? err.message : err}`));
+    // ── 6. Revisar resultados um a um ────────────────────────────────────────
+    for (const result of results) {
+      const { mr } = result;
+
+      if (result.status === 'rejected') {
+        console.log(chalk.red(`\n  ❌ MR #${mr.iid} — ${mr.title}`));
+        console.log(chalk.dim(`     Erro: ${result.error}\n`));
+        await prompts(
+          { type: 'confirm', name: 'next', message: 'Continuar para o próximo MR?', initial: true },
+          { onCancel: () => process.exit(0) },
+        );
+        continue;
       }
-    }
 
-    if (shouldMerge) {
-      const spin = createSpinner('Fazendo merge na develop...');
-      try {
-        await mergeMergeRequest(projectId, mrIid);
-        spin.stop(`  ${chalk.bold.green(`🔀 MR #${mrIid} merge iniciado! (será concluído quando o pipeline passar)`)}`);
-      } catch (err) {
-        spin.stop();
-        console.error(chalk.red(`  ❌ Erro ao fazer merge: ${err instanceof Error ? err.message : err}`));
+      displayAnalysis(mr, result.analysis);
+
+      const { action } = (await prompts(
+        {
+          type: 'select',
+          name: 'action',
+          message: `MR #${mr.iid} — O que deseja fazer?`,
+          choices: [
+            { title: chalk.green('✅  Aprovar o MR no GitLab'),                       description: 'Aprova via GitLab API',                                              value: 'approve' },
+            { title: chalk.bold.green('✅🔀 Aprovar E fazer merge na develop'),        description: 'Aprova e dispara o merge (executa quando o pipeline passar)',        value: 'approve-merge' },
+            { title: chalk.red('❌  Reprovar — postar análise como comentário'),       description: 'Posta o relatório no MR e não aprova',                               value: 'comment' },
+            { title: chalk.green('✅  Aprovar E postar análise no MR'),                description: 'Aprova e registra o relatório para a equipe',                        value: 'both' },
+            { title: chalk.bold.green('✅💬🔀 Aprovar, postar análise E fazer merge'), description: 'Aprova, posta o relatório e dispara o merge na develop',             value: 'both-merge' },
+            { title: chalk.dim('↩   Pular este MR'),                                  value: 'skip' },
+          ],
+        },
+        { onCancel: () => process.exit(0) },
+      )) as { action: 'approve' | 'approve-merge' | 'comment' | 'both' | 'both-merge' | 'skip' };
+
+      console.log();
+
+      const shouldApprove = action === 'approve' || action === 'approve-merge' || action === 'both' || action === 'both-merge';
+      const shouldComment = action === 'comment' || action === 'both' || action === 'both-merge';
+      const shouldMerge   = action === 'approve-merge' || action === 'both-merge';
+
+      if (shouldApprove) {
+        const spin = createSpinner('Aprovando MR no GitLab...');
+        try {
+          await approveMergeRequest(projectId, mr.iid);
+          spin.stop(`  ${chalk.green(`✅ MR #${mr.iid} aprovado com sucesso!`)}`);
+        } catch (err) {
+          spin.stop();
+          console.error(chalk.red(`  ❌ Erro ao aprovar: ${err instanceof Error ? err.message : err}`));
+        }
       }
-    }
 
-    if (action === 'skip') {
-      console.log(chalk.dim('  Nenhuma ação executada.'));
-    }
+      if (shouldComment) {
+        const spin = createSpinner('Postando análise no GitLab...');
+        try {
+          const commentBody = `@${mr.author.username}\n\n${result.analysis.comentario_geral}`;
+          await postComment(projectId, mr.iid, commentBody);
+          spin.stop(`  ${chalk.yellow(`💬 Análise postada como comentário no MR #${mr.iid}`)}`);
+        } catch (err) {
+          spin.stop();
+          console.error(chalk.red(`  ❌ Erro ao comentar: ${err instanceof Error ? err.message : err}`));
+        }
+      }
 
-    console.log();
+      if (shouldMerge) {
+        const spin = createSpinner('Fazendo merge na develop...');
+        try {
+          await mergeMergeRequest(projectId, mr.iid);
+          spin.stop(`  ${chalk.bold.green(`🔀 MR #${mr.iid} merge iniciado!`)}`);
+        } catch (err) {
+          spin.stop();
+          console.error(chalk.red(`  ❌ Erro ao fazer merge: ${err instanceof Error ? err.message : err}`));
+        }
+      }
+
+      if (action === 'skip') {
+        console.log(chalk.dim('  Nenhuma ação executada.'));
+      }
+
+      console.log();
+    } // fim do for (results)
   } // fim do loop principal
 }
 
