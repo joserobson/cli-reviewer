@@ -7,36 +7,18 @@ import prompts from 'prompts';
 import { listOpenMergeRequests, getMergeRequestChanges, approveMergeRequest, postComment, mergeMergeRequest } from './gitlab';
 import { analyzeMergeRequest, type AIProvider } from './ai';
 import { displayBanner, displayAnalysis, createSpinner, createParallelProgressDisplay } from './display';
-import type { MergeRequest, ProjectType, MRAnalysisResult } from './types';
-
-// ─── Configuração dos projetos ────────────────────────────────────────────────
-
-const PROJECTS: Record<ProjectType, { label: string; envKey: string }> = {
-  front: { label: 'Frontend Angular', envKey: 'GITLAB_PROJECT_ID' },
-  api:   { label: 'API .NET',         envKey: 'GITLAB_API_PROJECT_ID' },
-};
+import { loadProjects } from './projects';
+import type { MergeRequest, MRAnalysisResult } from './types';
 
 // ─── Validação de variáveis de ambiente ──────────────────────────────────────
 
-function validateEnv(projectType: ProjectType): string {
-  const base = ['GITLAB_URL', 'GITLAB_TOKEN'];
-  const { envKey, label } = PROJECTS[projectType];
-
-  const missingBase = base.filter(k => !process.env[k]);
-  if (missingBase.length > 0) {
-    console.error(chalk.red(`\n  ❌ Variáveis faltando no .env: ${missingBase.join(', ')}`));
-    console.error(chalk.dim('  Copie .env.example para .env e preencha os valores.\n'));
+function validateBaseEnv(): void {
+  const missing = ['GITLAB_URL', 'GITLAB_TOKEN'].filter(k => !process.env[k]);
+  if (missing.length > 0) {
+    console.error(chalk.red(`\n  ❌ Missing variables in .env: ${missing.join(', ')}`));
+    console.error(chalk.dim('  Copy .env.example to .env and fill in the values.\n'));
     process.exit(1);
   }
-
-  const projectId = process.env[envKey];
-  if (!projectId) {
-    console.error(chalk.red(`\n  ❌ Variável ${envKey} não definida no .env`));
-    console.error(chalk.dim(`  Configure o ID do projeto ${label} e tente novamente.\n`));
-    process.exit(1);
-  }
-
-  return projectId;
 }
 
 // ─── Data relativa ────────────────────────────────────────────────────────────
@@ -53,31 +35,38 @@ function relativeDate(isoDate: string): string {
 
 async function main(): Promise<void> {
   displayBanner();
+  validateBaseEnv();
 
   // ── 1. Escolher o projeto ──────────────────────────────────────────────────
+  const allProjects = loadProjects();
+
+  if (allProjects.length === 0) {
+    console.error(chalk.red('\n  ❌ No projects configured.'));
+    console.error(chalk.dim('  Set GITLAB_PROJECTS in your .env (e.g. 133:front:Frontend Angular)\n'));
+    process.exit(1);
+  }
+
+  const typeColor: Record<string, (s: string) => string> = {
+    front:   chalk.bold.magenta,
+    api:     chalk.bold.green,
+    generic: chalk.bold.cyan,
+  };
+
   const projectRes = (await prompts(
     {
-      type: 'select',
-      name: 'projectType',
-      message: 'Qual projeto deseja revisar?',
-      choices: [
-        {
-          title: `${chalk.bold.magenta('Frontend')}  ${chalk.dim('Angular / TypeScript')}`,
-          description: 'MRs do projeto Frontend Angular',
-          value: 'front',
-        },
-        {
-          title: `${chalk.bold.green('API .NET')}   ${chalk.dim('.NET / C#')}`,
-          description: 'MRs do projeto API .NET',
-          value: 'api',
-        },
-      ],
+      type: allProjects.length === 1 ? null : 'select',
+      name: 'index',
+      message: 'Which project do you want to review?',
+      choices: allProjects.map((p, i) => ({
+        title: (typeColor[p.type] ?? chalk.bold)(p.label) + chalk.dim(`  [${p.type}]`),
+        value: i,
+      })),
     },
     { onCancel: () => process.exit(0) },
-  )) as { projectType: ProjectType };
+  )) as { index: number };
 
-  const projectType = projectRes.projectType;
-  const projectId   = validateEnv(projectType);
+  const selectedProject = allProjects[projectRes?.index ?? 0];
+  const { id: projectId, type: projectType, label: projectLabel } = selectedProject;
 
   // ── 2. Escolher o AI provider ──────────────────────────────────────────────
   const providerRes = (await prompts(
@@ -106,7 +95,6 @@ async function main(): Promise<void> {
   // Redesenha o banner com o provider escolhido
   displayBanner(provider);
 
-  const projectLabel = PROJECTS[projectType].label;
   const providerName = provider === 'claude' ? 'Claude' : 'Gemini';
 
   // ── Loop principal: permite avaliar múltiplos MRs ─────────────────────────

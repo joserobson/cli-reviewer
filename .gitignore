@@ -17,6 +17,10 @@ npm-debug.log*
 .claude/settings.local.json
 .claude/memory/
 
+# Watcher state (local, não deve ser commitado)
+.watcher-state.json
+.llm-usage.json
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,4 +1,10 @@
-export type ProjectType = 'front' | 'api';
+export type ProjectType = 'front' | 'api' | 'generic';
+
+export interface ProjectConfig {
+  id: string;
+  type: ProjectType;
+  label: string;
+}
 
 export interface MergeRequest {
   iid: number;

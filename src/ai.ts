@@ -3,10 +3,22 @@ import type { MergeRequest, FileChange, ClaudeAnalysis, ProjectType } from './ty
 
 export type AIProvider = 'claude' | 'gemini';
 
-const PROVIDERS: Record<AIProvider, { cmd: string; args: string[] }> = {
-  claude: { cmd: 'claude', args: ['--print'] },
-  gemini: { cmd: 'gemini', args: ['--yolo'] },
-};
+function parseArgs(raw: string): string[] {
+  return raw.split(/\s+/).filter(Boolean);
+}
+
+function getProviders(): Record<AIProvider, { cmd: string; args: string[] }> {
+  return {
+    claude: {
+      cmd:  process.env.CLAUDE_CMD  ?? 'claude',
+      args: parseArgs(process.env.CLAUDE_ARGS ?? '--print'),
+    },
+    gemini: {
+      cmd:  process.env.GEMINI_CMD  ?? 'gemini',
+      args: parseArgs(process.env.GEMINI_ARGS ?? '--yolo'),
+    },
+  };
+}
 
 // ─── Utilitários ─────────────────────────────────────────────────────────────
 
@@ -26,7 +38,7 @@ function extractJSON(text: string): string {
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function runCLI(provider: AIProvider, prompt: string): Promise<string> {
-  const { cmd, args } = PROVIDERS[provider];
+  const { cmd, args } = getProviders()[provider];
 
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, {
@@ -229,6 +241,55 @@ Avalie criteriosamente:
 ${JSON_INSTRUCTIONS}`;
 }
 
+// ─── Prompt Genérico (qualquer linguagem/framework) ──────────────────────────
+
+function buildPromptGeneric(mr: MergeRequest, changes: FileChange[]): string {
+  return `You are a senior software engineer performing a thorough code review.
+Analyze the Merge Request below and respond with a detailed analysis in the language used in the MR description (default to English if unclear).
+
+## MR Information
+- **Title**: ${mr.title}
+- **Author**: ${mr.author.name} (@${mr.author.username})
+- **Branch**: \`${mr.source_branch}\` → \`${mr.target_branch}\`
+- **Description**: ${mr.description?.trim() || '(no description)'}
+- **Files changed**: ${changes.length}
+
+## Changes
+${buildDiffContent(changes)}
+
+## Review Checklist
+
+Evaluate the following areas and flag issues as suggestions:
+
+### Correctness
+- Logic errors and off-by-one mistakes
+- Missing null/undefined guards
+- Incorrect error handling or swallowed exceptions
+
+### Security
+- Injection vulnerabilities (SQL, command, XSS)
+- Sensitive data exposure in logs or responses
+- Missing authorization checks
+
+### Performance
+- Unnecessary loops, N+1 queries, or redundant network calls
+- Heavy synchronous operations blocking the main thread
+- Missing pagination or unbounded result sets
+
+### Code Quality
+- Functions or classes with multiple responsibilities (SRP violation)
+- Magic numbers and unexplained constants
+- Dead code, unused imports, or debug statements left in
+- Duplicated logic that should be extracted
+
+### Reliability
+- Race conditions and thread-safety issues
+- Missing retry/timeout handling for external calls
+- Fragile assumptions about input format or order
+
+${JSON_INSTRUCTIONS}`;
+}
+
 // ─── Instruções JSON (compartilhadas) ────────────────────────────────────────
 
 const JSON_INSTRUCTIONS = `Responda SOMENTE com JSON válido (sem markdown ao redor), nesta estrutura exata:
@@ -260,9 +321,9 @@ export async function analyzeMergeRequest(
   mr: MergeRequest,
   changes: FileChange[],
 ): Promise<ClaudeAnalysis> {
-  const prompt    = projectType === 'api'
-    ? buildPromptDotNet(mr, changes)
-    : buildPromptFront(mr, changes);
+  const prompt = projectType === 'api'     ? buildPromptDotNet(mr, changes)
+               : projectType === 'generic' ? buildPromptGeneric(mr, changes)
+               :                             buildPromptFront(mr, changes);
   const rawOutput = await runCLI(provider, prompt);
   const jsonText  = extractJSON(rawOutput);
 

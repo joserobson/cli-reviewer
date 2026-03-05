@@ -4,7 +4,9 @@
   "description": "CLI para análise de Merge Requests do GitLab usando Claude ou Gemini CLI local",
   "engines": { "node": ">=18" },
   "scripts": {
-    "review": "tsx src/index.ts"
+    "review": "tsx src/index.ts",
+    "watch": "tsx src/watcher.ts",
+    "test": "tsx --test tests/projects.test.ts tests/usage-tracker.test.ts tests/watcher.test.ts"
   },
   "dependencies": {
     "chalk": "^4.1.2",
