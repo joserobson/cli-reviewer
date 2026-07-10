@@ -13,8 +13,9 @@ function severityLabel(s: Suggestion['severidade']): string {
 }
 
 const PROVIDER_LABEL: Record<AIProvider, string> = {
-  claude: 'Claude CLI ',
+  codex: 'Codex CLI ',
   gemini: 'Gemini CLI',
+  code: 'Claude Code',
 };
 
 export function displayBanner(provider?: AIProvider): void {

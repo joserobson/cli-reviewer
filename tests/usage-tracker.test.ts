@@ -2,7 +2,7 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
 
-import { estimateTokens, recordUsage, getUsageSummary, selectProvider } from '../src/usage-tracker';
+import { estimateTokens, getUsageSummary, selectProvider } from '../src/usage-tracker';
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
@@ -31,8 +31,6 @@ function withEnv(vars: Record<string, string | undefined>, fn: () => void): void
   }
 }
 
-// ─── estimateTokens ───────────────────────────────────────────────────────────
-
 describe('estimateTokens', () => {
   it('retorna 0 para string vazia', () => {
     assert.equal(estimateTokens(''), 0);
@@ -42,139 +40,170 @@ describe('estimateTokens', () => {
     assert.equal(estimateTokens('abcd'), 1);
   });
 
-  it('arredonda para cima (ceil)', () => {
-    assert.equal(estimateTokens('abc'), 1);  // 3/4 = 0.75 → ceil = 1
-    assert.equal(estimateTokens('abcde'), 2); // 5/4 = 1.25 → ceil = 2
+  it('arredonda para cima', () => {
+    assert.equal(estimateTokens('abc'), 1);
+    assert.equal(estimateTokens('abcde'), 2);
   });
 
   it('estima corretamente para diff maior', () => {
-    const text = 'x'.repeat(400);
-    assert.equal(estimateTokens(text), 100);
+    assert.equal(estimateTokens('x'.repeat(400)), 100);
   });
 });
-
-// ─── getUsageSummary ──────────────────────────────────────────────────────────
 
 describe('getUsageSummary', () => {
   afterEach(cleanStore);
 
-  it('retorna zeros quando não há store', () => {
+  it('retorna zeros quando nao ha store', () => {
     cleanStore();
     const summary = getUsageSummary();
-    assert.equal(summary.claude.requests, 0);
-    assert.equal(summary.claude.estimatedTokens, 0);
-    assert.equal(summary.gemini.requests, 0);
+    assert.equal(summary.codex.requests, 0);
+    assert.equal(summary.gemini.estimatedTokens, 0);
+    assert.equal(summary.code.requests, 0);
     assert.equal(summary.month, currentMonth());
   });
 
-  it('retorna zeros quando o store é de outro mês (reset automático)', () => {
+  it('retorna zeros quando o store e de outro mes', () => {
     writeStore({
       month: '2020-01',
-      claude: { requests: 50, estimatedTokens: 999999 },
+      codex: { requests: 50, estimatedTokens: 999999 },
       gemini: { requests: 30, estimatedTokens: 500000 },
+      code: { requests: 10, estimatedTokens: 100000 },
     });
     const summary = getUsageSummary();
-    assert.equal(summary.claude.requests, 0);
+    assert.equal(summary.codex.requests, 0);
     assert.equal(summary.gemini.requests, 0);
+    assert.equal(summary.code.requests, 0);
   });
 
-  it('retorna dados do mês atual corretamente', () => {
+  it('migra uso antigo de claude para code', () => {
     writeStore({
       month: currentMonth(),
       claude: { requests: 5, estimatedTokens: 10000 },
       gemini: { requests: 3, estimatedTokens: 6000 },
     });
     const summary = getUsageSummary();
-    assert.equal(summary.claude.requests, 5);
-    assert.equal(summary.claude.estimatedTokens, 10000);
+    assert.equal(summary.code.requests, 5);
+    assert.equal(summary.code.estimatedTokens, 10000);
     assert.equal(summary.gemini.requests, 3);
   });
 
-  it('lê o limite configurado no env', () => {
+  it('le limites e flags configuradas no env', () => {
     cleanStore();
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '7000000', WATCH_GEMINI_MONTHLY_TOKENS: '1500000' }, () => {
+    withEnv({
+      CODEX_ENABLED: 'true',
+      GEMINI_ENABLED: 'false',
+      CODE_ENABLED: 'true',
+      WATCH_CODEX_MONTHLY_TOKENS: '7000000',
+      WATCH_GEMINI_MONTHLY_TOKENS: '1500000',
+      WATCH_CODE_MONTHLY_TOKENS: '900000',
+    }, () => {
       const summary = getUsageSummary();
-      assert.equal(summary.claude.limit, 7000000);
+      assert.equal(summary.codex.limit, 7000000);
       assert.equal(summary.gemini.limit, 1500000);
+      assert.equal(summary.code.limit, 900000);
+      assert.equal(summary.codex.enabled, true);
+      assert.equal(summary.gemini.enabled, false);
+      assert.equal(summary.code.enabled, true);
     });
   });
 });
 
-// ─── selectProvider ───────────────────────────────────────────────────────────
-
 describe('selectProvider', () => {
   afterEach(cleanStore);
 
-  it('sem limites e sem histórico → prefere claude (menos requisições)', () => {
+  it('sem limites e sem historico prefere codex', () => {
     cleanStore();
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '0', WATCH_GEMINI_MONTHLY_TOKENS: '0' }, () => {
-      const provider = selectProvider(1000);
-      assert.equal(provider, 'claude');
+    withEnv({
+      CODEX_ENABLED: 'true',
+      GEMINI_ENABLED: 'true',
+      CODE_ENABLED: 'false',
+      WATCH_CODEX_MONTHLY_TOKENS: '0',
+      WATCH_GEMINI_MONTHLY_TOKENS: '0',
+    }, () => {
+      assert.equal(selectProvider(1000), 'codex');
     });
   });
 
-  it('sem limites → balanceia por contagem (round-robin)', () => {
+  it('ignora providers desabilitados', () => {
+    cleanStore();
+    withEnv({
+      CODEX_ENABLED: 'false',
+      GEMINI_ENABLED: 'true',
+      CODE_ENABLED: 'false',
+    }, () => {
+      assert.equal(selectProvider(1000), 'gemini');
+    });
+  });
+
+  it('sem limites balanceia por contagem', () => {
     writeStore({
       month: currentMonth(),
-      claude: { requests: 5, estimatedTokens: 0 },
+      codex: { requests: 5, estimatedTokens: 0 },
       gemini: { requests: 3, estimatedTokens: 0 },
+      code: { requests: 0, estimatedTokens: 0 },
     });
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '0', WATCH_GEMINI_MONTHLY_TOKENS: '0' }, () => {
-      // gemini tem menos requisições → deve ser escolhido
-      const provider = selectProvider(1000);
-      assert.equal(provider, 'gemini');
-    });
-  });
-
-  it('ambos com limites → escolhe quem tem maior % restante', () => {
-    writeStore({
-      month: currentMonth(),
-      claude: { requests: 10, estimatedTokens: 6_000_000 }, // 60% usado de 10M
-      gemini: { requests: 5,  estimatedTokens: 300_000 },   // 20% usado de 1.5M
-    });
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '10000000', WATCH_GEMINI_MONTHLY_TOKENS: '1500000' }, () => {
-      // Gemini tem 80% restante vs Claude com 40% → gemini
-      const provider = selectProvider(1000);
-      assert.equal(provider, 'gemini');
+    withEnv({
+      CODEX_ENABLED: 'true',
+      GEMINI_ENABLED: 'true',
+      CODE_ENABLED: 'false',
+      WATCH_CODEX_MONTHLY_TOKENS: '0',
+      WATCH_GEMINI_MONTHLY_TOKENS: '0',
+    }, () => {
+      assert.equal(selectProvider(1000), 'gemini');
     });
   });
 
-  it('claude esgotado → usa gemini automaticamente', () => {
+  it('com limites escolhe quem tem maior percentual restante', () => {
     writeStore({
       month: currentMonth(),
-      claude: { requests: 100, estimatedTokens: 9_999_000 }, // quase no limite de 10M
-      gemini: { requests: 10,  estimatedTokens: 100_000 },
+      codex: { requests: 10, estimatedTokens: 6_000_000 },
+      gemini: { requests: 5, estimatedTokens: 300_000 },
+      code: { requests: 0, estimatedTokens: 0 },
     });
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '10000000', WATCH_GEMINI_MONTHLY_TOKENS: '5000000' }, () => {
-      // Prompt de 5000 tokens: claude só tem 1000 restantes → esgotado
-      const provider = selectProvider(5_000);
-      assert.equal(provider, 'gemini');
+    withEnv({
+      CODEX_ENABLED: 'true',
+      GEMINI_ENABLED: 'true',
+      CODE_ENABLED: 'false',
+      WATCH_CODEX_MONTHLY_TOKENS: '10000000',
+      WATCH_GEMINI_MONTHLY_TOKENS: '1500000',
+    }, () => {
+      assert.equal(selectProvider(1000), 'gemini');
     });
   });
 
-  it('gemini esgotado → usa claude automaticamente', () => {
+  it('codex esgotado usa gemini automaticamente', () => {
     writeStore({
       month: currentMonth(),
-      claude: { requests: 5,   estimatedTokens: 100_000 },
-      gemini: { requests: 100, estimatedTokens: 1_499_000 }, // quase no limite de 1.5M
+      codex: { requests: 100, estimatedTokens: 9_999_000 },
+      gemini: { requests: 10, estimatedTokens: 100_000 },
+      code: { requests: 0, estimatedTokens: 0 },
     });
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '10000000', WATCH_GEMINI_MONTHLY_TOKENS: '1500000' }, () => {
-      // Prompt de 5000 tokens: gemini só tem 1000 restantes → esgotado
-      const provider = selectProvider(5_000);
-      assert.equal(provider, 'claude');
+    withEnv({
+      CODEX_ENABLED: 'true',
+      GEMINI_ENABLED: 'true',
+      CODE_ENABLED: 'false',
+      WATCH_CODEX_MONTHLY_TOKENS: '10000000',
+      WATCH_GEMINI_MONTHLY_TOKENS: '5000000',
+    }, () => {
+      assert.equal(selectProvider(5_000), 'gemini');
     });
   });
 
-  it('só limite do claude configurado — protege quando quase esgotado', () => {
+  it('gemini esgotado usa codex automaticamente', () => {
     writeStore({
       month: currentMonth(),
-      claude: { requests: 50, estimatedTokens: 999_999 }, // quase no limite de 1M
-      gemini: { requests: 10, estimatedTokens: 0 },
+      codex: { requests: 5, estimatedTokens: 100_000 },
+      gemini: { requests: 100, estimatedTokens: 1_499_000 },
+      code: { requests: 0, estimatedTokens: 0 },
     });
-    withEnv({ WATCH_CLAUDE_MONTHLY_TOKENS: '1000000', WATCH_GEMINI_MONTHLY_TOKENS: '0' }, () => {
-      // Prompt de 5000 tokens: claude só tem 1 token restante → usa gemini
-      const provider = selectProvider(5_000);
-      assert.equal(provider, 'gemini');
+    withEnv({
+      CODEX_ENABLED: 'true',
+      GEMINI_ENABLED: 'true',
+      CODE_ENABLED: 'false',
+      WATCH_CODEX_MONTHLY_TOKENS: '10000000',
+      WATCH_GEMINI_MONTHLY_TOKENS: '1500000',
+    }, () => {
+      assert.equal(selectProvider(5_000), 'codex');
     });
   });
 });

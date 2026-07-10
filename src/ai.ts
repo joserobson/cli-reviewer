@@ -1,23 +1,60 @@
 import { spawn } from 'child_process';
 import type { MergeRequest, FileChange, ClaudeAnalysis, ProjectType } from './types';
 
-export type AIProvider = 'claude' | 'gemini';
+export const AI_PROVIDERS = ['codex', 'gemini', 'code'] as const;
+export type AIProvider = typeof AI_PROVIDERS[number];
+
+export interface AIProviderConfig {
+  cmd: string;
+  args: string[];
+  enabled: boolean;
+  label: string;
+  description: string;
+}
 
 function parseArgs(raw: string): string[] {
   return raw.split(/\s+/).filter(Boolean);
 }
 
-function getProviders(): Record<AIProvider, { cmd: string; args: string[] }> {
+function envFlag(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
+export function getProviders(): Record<AIProvider, AIProviderConfig> {
   return {
-    claude: {
-      cmd:  process.env.CLAUDE_CMD  ?? 'claude',
-      args: parseArgs(process.env.CLAUDE_ARGS ?? '--print'),
+    codex: {
+      cmd: process.env.CODEX_CMD ?? 'codex',
+      args: parseArgs(process.env.CODEX_ARGS ?? 'exec -'),
+      enabled: envFlag('CODEX_ENABLED', true),
+      label: 'Codex CLI',
+      description: 'Usa o Codex CLI autenticado na sua maquina',
     },
     gemini: {
-      cmd:  process.env.GEMINI_CMD  ?? 'gemini',
+      cmd: process.env.GEMINI_CMD ?? 'gemini',
       args: parseArgs(process.env.GEMINI_ARGS ?? '--yolo'),
+      enabled: envFlag('GEMINI_ENABLED', true),
+      label: 'Gemini CLI',
+      description: 'Usa o Gemini CLI autenticado na sua maquina',
+    },
+    code: {
+      cmd: process.env.CODE_CMD ?? process.env.CLAUDE_CMD ?? 'claude',
+      args: parseArgs(process.env.CODE_ARGS ?? process.env.CLAUDE_ARGS ?? '--print'),
+      enabled: envFlag('CODE_ENABLED', false),
+      label: 'Claude Code',
+      description: 'Usa o Claude Code autenticado na sua maquina',
     },
   };
+}
+
+export function getEnabledProviders(): AIProvider[] {
+  const providers = getProviders();
+  return AI_PROVIDERS.filter(provider => providers[provider].enabled);
+}
+
+export function getProviderConfig(provider: AIProvider): AIProviderConfig {
+  return getProviders()[provider];
 }
 
 // ─── Utilitários ─────────────────────────────────────────────────────────────

@@ -1,7 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import type { AIProvider } from './ai';
-
-// ─── Tipos ────────────────────────────────────────────────────────────────────
+import { AI_PROVIDERS, getEnabledProviders, type AIProvider } from './ai';
 
 interface ProviderUsage {
   requests: number;
@@ -10,17 +8,18 @@ interface ProviderUsage {
 
 interface UsageStore {
   month: string; // "YYYY-MM"
-  claude: ProviderUsage;
+  codex: ProviderUsage;
   gemini: ProviderUsage;
+  code: ProviderUsage;
+  claude?: ProviderUsage;
 }
 
 export interface UsageSummary {
   month: string;
-  claude: ProviderUsage & { limit: number };
-  gemini: ProviderUsage & { limit: number };
+  codex: ProviderUsage & { limit: number; enabled: boolean };
+  gemini: ProviderUsage & { limit: number; enabled: boolean };
+  code: ProviderUsage & { limit: number; enabled: boolean };
 }
-
-// ─── Persistência ─────────────────────────────────────────────────────────────
 
 const STORE_PATH = '.llm-usage.json';
 
@@ -28,22 +27,35 @@ function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
+function emptyUsage(): ProviderUsage {
+  return { requests: 0, estimatedTokens: 0 };
+}
+
 function emptyStore(): UsageStore {
   return {
     month: currentMonth(),
-    claude: { requests: 0, estimatedTokens: 0 },
-    gemini: { requests: 0, estimatedTokens: 0 },
+    codex: emptyUsage(),
+    gemini: emptyUsage(),
+    code: emptyUsage(),
+  };
+}
+
+function normalizeStore(store: Partial<UsageStore>): UsageStore {
+  return {
+    month: store.month ?? currentMonth(),
+    codex: store.codex ?? emptyUsage(),
+    gemini: store.gemini ?? emptyUsage(),
+    code: store.code ?? store.claude ?? emptyUsage(),
   };
 }
 
 function loadStore(): UsageStore {
   if (existsSync(STORE_PATH)) {
     try {
-      const data = JSON.parse(readFileSync(STORE_PATH, 'utf8')) as UsageStore;
-      // Novo mês → zera automaticamente
-      if (data.month === currentMonth()) return data;
+      const data = JSON.parse(readFileSync(STORE_PATH, 'utf8')) as Partial<UsageStore>;
+      if (data.month === currentMonth()) return normalizeStore(data);
     } catch {
-      // Arquivo corrompido → reinicia
+      // Arquivo corrompido: reinicia.
     }
   }
   return emptyStore();
@@ -53,17 +65,13 @@ function saveStore(store: UsageStore): void {
   writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf8');
 }
 
-// ─── Estimativa de tokens ─────────────────────────────────────────────────────
-
 /**
- * Estimativa padrão: 1 token ≈ 4 caracteres (funciona bem para código/português).
- * Não é exata, mas suficiente para gerenciar limites mensais.
+ * Estimativa padrao: 1 token ~ 4 caracteres (funciona bem para codigo/portugues).
+ * Nao e exata, mas suficiente para gerenciar limites mensais.
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
-
-// ─── API pública ──────────────────────────────────────────────────────────────
 
 export function recordUsage(provider: AIProvider, tokens: number): void {
   const store = loadStore();
@@ -74,57 +82,74 @@ export function recordUsage(provider: AIProvider, tokens: number): void {
 
 export function getUsageSummary(): UsageSummary {
   const store = loadStore();
+  const enabled = new Set(getEnabledProviders());
+
   return {
     month: store.month,
-    claude: {
-      ...store.claude,
-      limit: parseInt(process.env.WATCH_CLAUDE_MONTHLY_TOKENS ?? '0'),
+    codex: {
+      ...store.codex,
+      limit: monthlyLimit('codex'),
+      enabled: enabled.has('codex'),
     },
     gemini: {
       ...store.gemini,
-      limit: parseInt(process.env.WATCH_GEMINI_MONTHLY_TOKENS ?? '0'),
+      limit: monthlyLimit('gemini'),
+      enabled: enabled.has('gemini'),
+    },
+    code: {
+      ...store.code,
+      limit: monthlyLimit('code'),
+      enabled: enabled.has('code'),
     },
   };
 }
 
 /**
- * Seleciona o provider com maior capacidade restante.
+ * Seleciona a CLI habilitada com maior capacidade restante.
  *
- * Algoritmo (em ordem de prioridade):
- * 1. Se os dois limites estão configurados → compara % restante; se um está
- *    esgotado para este prompt, usa o outro.
- * 2. Se só um limite está configurado → protege apenas ele.
- * 3. Sem limites → balanceia por contagem de requisições (round-robin simples).
+ * Algoritmo:
+ * 1. Remove CLIs desabilitadas por env.
+ * 2. Se ha limites configurados, escolhe a maior porcentagem restante.
+ * 3. Sem limites, balanceia por contagem de analises; Codex vence empate.
  */
 export function selectProvider(estimatedPromptTokens: number): AIProvider {
   const store = loadStore();
+  const enabledProviders = getEnabledProviders();
 
-  const claudeLimit = parseInt(process.env.WATCH_CLAUDE_MONTHLY_TOKENS ?? '0');
-  const geminiLimit = parseInt(process.env.WATCH_GEMINI_MONTHLY_TOKENS ?? '0');
-
-  const claudeUsed = store.claude.estimatedTokens;
-  const geminiUsed = store.gemini.estimatedTokens;
-
-  if (claudeLimit > 0 && geminiLimit > 0) {
-    const claudeRemaining = claudeLimit - claudeUsed;
-    const geminiRemaining = geminiLimit - geminiUsed;
-
-    // Um esgotado → usa o outro
-    const claudeExhausted = claudeRemaining < estimatedPromptTokens;
-    const geminiExhausted = geminiRemaining < estimatedPromptTokens;
-    if (claudeExhausted && !geminiExhausted) return 'gemini';
-    if (geminiExhausted && !claudeExhausted) return 'claude';
-
-    // Ambos com capacidade → maior % restante vence
-    const claudePct = claudeRemaining / claudeLimit;
-    const geminiPct = geminiRemaining / geminiLimit;
-    return claudePct >= geminiPct ? 'claude' : 'gemini';
+  if (enabledProviders.length === 0) {
+    throw new Error('Nenhuma CLI de IA habilitada. Ative CODEX_ENABLED, GEMINI_ENABLED ou CODE_ENABLED no .env.');
   }
 
-  // Só um limite configurado → protege ele quando estiver próximo do fim
-  if (claudeLimit > 0 && (claudeLimit - claudeUsed) < estimatedPromptTokens) return 'gemini';
-  if (geminiLimit > 0 && (geminiLimit - geminiUsed) < estimatedPromptTokens) return 'claude';
+  const candidates = enabledProviders.map(provider => {
+    const usage = store[provider];
+    const limit = monthlyLimit(provider);
+    const remaining = limit > 0 ? limit - usage.estimatedTokens : Number.POSITIVE_INFINITY;
+    return {
+      provider,
+      usage,
+      limit,
+      remaining,
+      exhausted: remaining < estimatedPromptTokens,
+      remainingPct: limit > 0 ? remaining / limit : Number.POSITIVE_INFINITY,
+    };
+  });
 
-  // Sem limites ou nenhum esgotado → balanceia por número de análises
-  return store.claude.requests <= store.gemini.requests ? 'claude' : 'gemini';
+  const available = candidates.filter(candidate => !candidate.exhausted);
+  const pool = available.length > 0 ? available : candidates;
+  const limited = pool.filter(candidate => candidate.limit > 0);
+
+  if (limited.length > 0) {
+    return limited.sort((a, b) => b.remainingPct - a.remainingPct)[0].provider;
+  }
+
+  return pool.sort((a, b) => {
+    if (a.usage.requests !== b.usage.requests) return a.usage.requests - b.usage.requests;
+    return AI_PROVIDERS.indexOf(a.provider) - AI_PROVIDERS.indexOf(b.provider);
+  })[0].provider;
+}
+
+function monthlyLimit(provider: AIProvider): number {
+  const key = `WATCH_${provider.toUpperCase()}_MONTHLY_TOKENS`;
+  const fallback = provider === 'code' ? process.env.WATCH_CLAUDE_MONTHLY_TOKENS : undefined;
+  return parseInt(process.env[key] ?? fallback ?? '0');
 }

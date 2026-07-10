@@ -1,6 +1,6 @@
 # MR Reviewer
 
-> AI-powered GitLab Merge Request reviewer that runs entirely on your machine — no cloud API costs.
+> AI-powered GitLab Merge Request reviewer that runs entirely on your machine, using local AI CLIs.
 
 **[Leia em Português](README.pt-BR.md)**
 
@@ -8,12 +8,12 @@
 
 ## What it does
 
-MR Reviewer connects to your GitLab instance, fetches open Merge Requests, sends the diff to a local AI CLI (Claude or Gemini), and returns a structured code review in seconds. It works in two modes:
+MR Reviewer connects to your GitLab instance, fetches open Merge Requests, sends the diff to a local AI CLI (Codex, Gemini, or Claude Code), and returns a structured code review in seconds. It works in two modes:
 
 - **Interactive CLI** — pick MRs manually, review results, then approve/comment/merge from the terminal.
-- **Watcher** — runs in the background, detects new MRs automatically, posts the review as a GitLab comment, and sends a Windows desktop notification.
+- **Watcher** — runs in the background, detects new MRs automatically, posts the review as a GitLab comment, and sends a desktop notification.
 
-Because it spawns `claude --print` or `gemini --yolo` locally, you pay nothing beyond your existing subscription.
+Because it spawns your configured local CLI, review data stays on your machine except for the GitLab API calls needed to fetch diffs and post comments.
 
 ---
 
@@ -34,12 +34,13 @@ Because it spawns `claude --print` or `gemini --yolo` locally, you pay nothing b
 | Requirement | Notes |
 |---|---|
 | Node.js ≥ 18 | `node --version` |
-| [Claude CLI](https://claude.ai/download) | Must be authenticated (`claude --print` works) |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Must be authenticated (`gemini --yolo` works) |
+| Codex CLI | Optional provider; must be installed and authenticated if enabled |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Optional provider; must be installed and authenticated if enabled |
+| Claude Code / Claude CLI | Optional provider; must be installed and authenticated if enabled |
 | GitLab Personal Access Token | Scope: `api` |
 | Desktop notifications (Watcher only) | Windows built-in · macOS built-in · Linux: `sudo apt install libnotify-bin` |
 
-You only need one of the AI CLIs; having both enables the smart selector.
+You only need one enabled AI CLI. Having multiple providers enables the smart selector.
 
 ---
 
@@ -51,7 +52,11 @@ cd mr-reviewer
 npm install
 cp .env.example .env
 # Edit .env with your GitLab credentials
+npm test
+npm run typecheck
 ```
+
+On PowerShell, use `Copy-Item .env.example .env` instead of `cp` if needed.
 
 ---
 
@@ -67,16 +72,24 @@ GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
 # Supported types: front (Angular), api (.NET C#), generic (any language)
 GITLAB_PROJECTS=133:front:Frontend Angular,134:api:API .NET
 
-# Optional: customize CLI commands (defaults shown)
-# CLAUDE_CMD=claude
-# CLAUDE_ARGS=--print
+# Enable one or more local AI CLIs
+CODEX_ENABLED=true
+GEMINI_ENABLED=true
+CODE_ENABLED=false
+
+# Optional: customize CLI commands
+# CODEX_CMD=codex
+# CODEX_ARGS=exec -
 # GEMINI_CMD=gemini
 # GEMINI_ARGS=--yolo
+# CODE_CMD=claude
+# CODE_ARGS=--print
 
 # Watcher settings
 WATCH_INTERVAL_MINUTES=2
-WATCH_CLAUDE_MONTHLY_TOKENS=7000000
-WATCH_GEMINI_MONTHLY_TOKENS=1500000
+WATCH_CODEX_MONTHLY_TOKENS=0
+WATCH_GEMINI_MONTHLY_TOKENS=0
+WATCH_CODE_MONTHLY_TOKENS=0
 ```
 
 Project IDs accept both numeric (`133`) and path-based (`group/project`) formats.
@@ -93,7 +106,7 @@ npm run review
 
 Flow:
 1. Select project (Angular or .NET API)
-2. Select AI provider (Claude or Gemini)
+2. Select AI provider (Codex, Gemini, or Claude Code)
 3. Pick one or more open MRs
 4. Review the analysis
 5. Choose an action: approve / post comment / merge / skip
@@ -106,7 +119,7 @@ npm run watch
 
 The watcher polls GitLab every `WATCH_INTERVAL_MINUTES` minutes. When a new MR is opened:
 
-1. Sends a Windows desktop notification
+1. Sends a desktop notification
 2. Fetches the diff and runs the analysis automatically
 3. Posts the review as a comment on the MR
 4. Logs usage statistics to the terminal
@@ -121,8 +134,8 @@ Usage is tracked in `.llm-usage.json` (gitignored, auto-resets monthly).
 
 | Scenario | Behavior |
 |---|---|
-| Both limits set | Picks the provider with the highest **remaining capacity %** |
-| One provider exhausted | Automatically falls back to the other |
+| One or more limits set | Picks the enabled provider with the highest **remaining capacity %** |
+| One provider exhausted | Automatically falls back to another enabled provider |
 | No limits configured | Round-robin by request count |
 
 Token estimation: `characters / 4` — standard approximation, sufficient for budgeting.
@@ -135,7 +148,7 @@ Token estimation: `characters / 4` — standard approximation, sufficient for bu
 src/
 ├── index.ts          # Interactive CLI — prompts, flow control, actions
 ├── watcher.ts        # Background monitor — polling, notifications, auto-post
-├── ai.ts             # Spawns claude/gemini, builds prompts, parses JSON
+├── ai.ts             # Spawns enabled AI CLIs, builds prompts, parses JSON
 ├── gitlab.ts         # GitLab API v4 wrapper
 ├── projects.ts       # Project config loader (parses GITLAB_PROJECTS env var)
 ├── usage-tracker.ts  # Token usage tracking + smart provider selection
@@ -173,10 +186,30 @@ Poll GitLab → New MR detected → Estimate tokens → Select provider
 ## Type-checking
 
 ```bash
-npx tsc --noEmit
+npm run typecheck
 ```
 
 No build step required — `tsx` executes TypeScript directly.
+
+## Development and contribution
+
+Before opening a pull request, run:
+
+```bash
+npm test
+npm run typecheck
+```
+
+See `CONTRIBUTING.md` for the contribution workflow and `SECURITY.md` for secret handling and vulnerability reporting. GitHub Actions runs the same validation on pull requests.
+
+## Troubleshooting
+
+| Problem | Check |
+|---|---|
+| Missing GitLab configuration | Copy `.env.example` to `.env` and set `GITLAB_URL`, `GITLAB_TOKEN`, and `GITLAB_PROJECTS` |
+| No AI provider available | Enable at least one of `CODEX_ENABLED`, `GEMINI_ENABLED`, or `CODE_ENABLED` |
+| AI command not found | Install/authenticate the CLI or override `*_CMD` and `*_ARGS` in `.env` |
+| Watcher does not post comments | Confirm token scope `api`, project IDs, and GitLab permissions |
 
 ---
 

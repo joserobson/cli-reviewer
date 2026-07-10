@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import { config } from 'dotenv';
 
 import { listOpenMergeRequests, getMergeRequestChanges, postComment } from './gitlab';
-import { analyzeMergeRequest } from './ai';
+import { AI_PROVIDERS, analyzeMergeRequest } from './ai';
 import { selectProvider, recordUsage, estimateTokens, getUsageSummary } from './usage-tracker';
 import { loadProjects } from './projects';
 import type { MergeRequest, ProjectConfig } from './types';
@@ -201,12 +201,13 @@ function printUsage(): void {
   const u = getUsageSummary();
   console.log(`\n📊 Uso estimado este mês (${u.month}):`);
 
-  for (const key of ['claude', 'gemini'] as const) {
+  for (const key of AI_PROVIDERS) {
     const p = u[key];
     const limitText = p.limit > 0
       ? ` / ${p.limit.toLocaleString()} tokens (${Math.round((p.estimatedTokens / p.limit) * 100)}% usado)`
       : ' (sem limite configurado)';
-    console.log(`   ${key.padEnd(8)}: ${p.estimatedTokens.toLocaleString()} tokens est.${limitText} | ${p.requests} análise(s)`);
+    const status = p.enabled ? 'habilitado' : 'desabilitado';
+    console.log(`   ${key.padEnd(8)}: ${p.estimatedTokens.toLocaleString()} tokens est.${limitText} | ${p.requests} análise(s) | ${status}`);
   }
 }
 

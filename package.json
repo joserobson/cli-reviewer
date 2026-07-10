@@ -1,11 +1,12 @@
 {
   "name": "mr-reviewer",
   "version": "1.0.0",
-  "description": "CLI para análise de Merge Requests do GitLab usando Claude ou Gemini CLI local",
+  "description": "CLI para análise de Merge Requests do GitLab usando Codex, Gemini ou Claude Code local",
   "engines": { "node": ">=18" },
   "scripts": {
     "review": "tsx src/index.ts",
     "watch": "tsx src/watcher.ts",
+    "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/projects.test.ts tests/usage-tracker.test.ts tests/watcher.test.ts"
   },
   "dependencies": {
