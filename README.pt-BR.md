@@ -27,6 +27,7 @@ Como executa a CLI local configurada, os dados da revisão ficam na sua máquina
 - Posta automaticamente a revisão completa como comentário formatado no GitLab/GitHub
 - Seletor inteligente de LLM: rastreia o uso estimado de tokens por mês e roteia automaticamente para o provider com maior capacidade restante
 - Reset mensal automático; limites configuráveis por provider
+- Dashboard web local com histórico de revisões, contagens por status e consumo estimado de tokens
 
 ---
 
@@ -115,6 +116,7 @@ AUTO_REVIEW_SKIP_DRAFT=true
 AUTO_REVIEW_APPROVE_ON_SUCCESS=false
 AUTO_REVIEW_MERGE_ON_SUCCESS=false
 WATCH_INTERVAL_MINUTES=2
+DASHBOARD_PORT=3334
 WEBHOOK_PORT=3333
 WEBHOOK_SECRET=change-me
 GITHUB_WEBHOOK_SECRET=change-me
@@ -176,11 +178,20 @@ cloudflared tunnel --url http://localhost:3333
 ngrok http 3333
 ```
 
+### Dashboard
+
+```bash
+npm run dashboard
+```
+
+Abra `http://localhost:3334/dashboard` para acompanhar histórico de revisões, contagens de aprovado/revisão necessária, comentários/ações executadas e uso estimado de tokens por provider. O painel lê o estado local de `.review-dashboard.json` e `.llm-usage.json`; ambos ficam fora do Git.
+
 ---
 
 ## Seleção Inteligente de LLM
 
 O uso é rastreado em `.llm-usage.json` (no gitignore, reset automático mensal).
+O histórico de revisões usado pelo dashboard é rastreado em `.review-dashboard.json` (também no gitignore).
 
 | Cenário | Comportamento |
 |---|---|
@@ -199,6 +210,7 @@ src/
 ├── index.ts          # CLI interativo — prompts, controle de fluxo, ações
 ├── watcher.ts        # Monitor em background — polling, notificações, auto-post
 ├── webhook-server.ts # Servidor HTTP para webhooks do GitLab/GitHub
+├── dashboard.ts      # Dashboard web local para revisões e uso de tokens
 ├── setup.ts          # Criação guiada do .env inicial
 ├── doctor.ts         # Diagnóstico local antes de rodar o revisor
 ├── automation.ts     # Comportamento compartilhado de revisão automática
@@ -208,6 +220,7 @@ src/
 ├── scm.ts            # Roteador de plataforma para operacoes GitLab/GitHub
 ├── projects.ts       # Loader de configuração de projetos
 ├── usage-tracker.ts  # Rastreamento de tokens + seleção inteligente de provider
+├── review-store.ts   # Historico local de revisões para métricas do dashboard
 ├── display.ts        # Saída no terminal — banner, spinners, formatação da análise
 └── types.ts          # Interfaces TypeScript compartilhadas
 ```

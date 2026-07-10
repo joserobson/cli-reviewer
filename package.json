@@ -9,6 +9,7 @@
     "review": "tsx src/index.ts",
     "watch": "tsx src/watcher.ts",
     "webhook": "tsx src/webhook-server.ts",
+    "dashboard": "tsx src/dashboard.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"
   },

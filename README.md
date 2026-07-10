@@ -27,6 +27,7 @@ Because it spawns your configured local CLI, review data stays on your machine e
 - Auto-posts the full review as a formatted GitLab/GitHub comment
 - Smart LLM selector: tracks estimated monthly token usage per provider and automatically routes to the one with most remaining capacity
 - Monthly usage resets automatically; configurable limits per provider
+- Local web dashboard with review history, status counts, and estimated token consumption
 
 ---
 
@@ -115,6 +116,7 @@ AUTO_REVIEW_SKIP_DRAFT=true
 AUTO_REVIEW_APPROVE_ON_SUCCESS=false
 AUTO_REVIEW_MERGE_ON_SUCCESS=false
 WATCH_INTERVAL_MINUTES=2
+DASHBOARD_PORT=3334
 WEBHOOK_PORT=3333
 WEBHOOK_SECRET=change-me
 GITHUB_WEBHOOK_SECRET=change-me
@@ -176,11 +178,20 @@ cloudflared tunnel --url http://localhost:3333
 ngrok http 3333
 ```
 
+### Dashboard
+
+```bash
+npm run dashboard
+```
+
+Open `http://localhost:3334/dashboard` to inspect review history, approval/review-needed counts, comments/actions taken, and estimated token usage per provider. The dashboard reads local state from `.review-dashboard.json` and `.llm-usage.json`; both files are gitignored.
+
 ---
 
 ## Smart LLM Selection
 
 Usage is tracked in `.llm-usage.json` (gitignored, auto-resets monthly).
+Review history for the dashboard is tracked in `.review-dashboard.json` (gitignored).
 
 | Scenario | Behavior |
 |---|---|
@@ -199,6 +210,7 @@ src/
 ├── index.ts          # Interactive CLI — prompts, flow control, actions
 ├── watcher.ts        # Background monitor — polling, notifications, auto-post
 ├── webhook-server.ts # HTTP server for GitLab/GitHub webhooks
+├── dashboard.ts      # Local web dashboard for reviews and token usage
 ├── setup.ts          # Guided first-run .env creation
 ├── doctor.ts         # Local diagnostics before running the reviewer
 ├── automation.ts     # Shared automatic review behavior
@@ -208,6 +220,7 @@ src/
 ├── scm.ts            # Platform router for GitLab/GitHub operations
 ├── projects.ts       # Project config loader
 ├── usage-tracker.ts  # Token usage tracking + smart provider selection
+├── review-store.ts   # Local review history for dashboard metrics
 ├── display.ts        # Terminal output — banner, spinners, analysis formatting
 └── types.ts          # Shared TypeScript interfaces
 ```
