@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { envFlag } from './env-utils';
 import type { MergeRequest, FileChange, ClaudeAnalysis, ProjectType } from './types';
 
 export const AI_PROVIDERS = ['codex', 'gemini', 'code'] as const;
@@ -14,12 +15,6 @@ export interface AIProviderConfig {
 
 function parseArgs(raw: string): string[] {
   return raw.split(/\s+/).filter(Boolean);
-}
-
-function envFlag(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
 export function getProviders(): Record<AIProvider, AIProviderConfig> {

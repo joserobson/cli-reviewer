@@ -8,10 +8,11 @@
 
 ## O que faz
 
-O MR Reviewer conecta ao seu GitLab, busca os Merge Requests abertos, envia o diff para uma CLI de IA local (Codex, Gemini ou Claude Code) e devolve uma revisão de código estruturada em segundos. Funciona em dois modos:
+O MR Reviewer conecta ao seu GitLab, busca os Merge Requests abertos, envia o diff para uma CLI de IA local (Codex, Gemini ou Claude Code) e devolve uma revisão de código estruturada em segundos. Funciona em três modos:
 
 - **CLI interativo** — você escolhe os MRs manualmente, revisa os resultados e aprova/comenta/faz merge direto do terminal.
-- **Watcher** — roda em segundo plano, detecta novos MRs automaticamente, posta a revisão como comentário no GitLab e envia uma notificação no desktop.
+- **Watcher** — faz polling em segundo plano, detecta novos MRs automaticamente, posta a revisão como comentário no GitLab e envia uma notificação no desktop.
+- **Servidor de webhook** — recebe eventos de Merge Request do GitLab para automação quase em tempo real em servidor/VPS.
 
 Como executa a CLI local configurada, os dados da revisão ficam na sua máquina, exceto pelas chamadas necessárias à API do GitLab para buscar diffs e postar comentários.
 
@@ -52,11 +53,27 @@ cd mr-reviewer
 npm install
 cp .env.example .env
 # Edite o .env com suas credenciais do GitLab
+npm run doctor
 npm test
 npm run typecheck
 ```
 
 No PowerShell, use `Copy-Item .env.example .env` no lugar de `cp`, se necessario.
+
+---
+
+## Setup inicial
+
+Para configuração guiada, rode:
+
+```bash
+npm run setup
+npm run doctor
+```
+
+Escolha **local** para revisões sob demanda ou automação simples por polling na sua máquina. Escolha **servidor/VPS** para automação contínua com webhooks do GitLab.
+
+`npm run doctor` valida Node.js, `.env`, configuração do GitLab, projetos configurados, providers habilitados, comandos das CLIs e as opções específicas de polling/webhook.
 
 ---
 
@@ -85,8 +102,17 @@ CODE_ENABLED=false
 # CODE_CMD=claude
 # CODE_ARGS=--print
 
-# Configurações do watcher
+# Configurações de revisão automática
+AUTO_REVIEW_ENABLED=false
+AUTO_REVIEW_MODE=polling
+AUTO_REVIEW_POST_COMMENT=true
+AUTO_REVIEW_NOTIFY_DESKTOP=true
+AUTO_REVIEW_SKIP_DRAFT=true
+AUTO_REVIEW_APPROVE_ON_SUCCESS=false
+AUTO_REVIEW_MERGE_ON_SUCCESS=false
 WATCH_INTERVAL_MINUTES=2
+WEBHOOK_PORT=3333
+WEBHOOK_SECRET=change-me
 WATCH_CODEX_MONTHLY_TOKENS=0
 WATCH_GEMINI_MONTHLY_TOKENS=0
 WATCH_CODE_MONTHLY_TOKENS=0
@@ -126,6 +152,25 @@ O watcher faz polling no GitLab a cada `WATCH_INTERVAL_MINUTES` minutos. Quando 
 
 Na primeira execução, os MRs já abertos são marcados como "já vistos" e não são re-analisados.
 
+O watcher respeita as flags `AUTO_REVIEW_*`. Por padrão ele ignora Draft MRs, posta comentários, envia notificações desktop e **não** aprova nem faz merge automaticamente.
+Defina `AUTO_REVIEW_ENABLED=true` para permitir que `npm run watch` analise e poste automaticamente; quando estiver `false`, novos MRs são detectados e registrados sem revisão automática.
+
+### Servidor de webhook
+
+```bash
+npm run webhook
+```
+
+Configure `AUTO_REVIEW_ENABLED=true`, `AUTO_REVIEW_MODE=webhook`, `WEBHOOK_PORT` e `WEBHOOK_SECRET`. No GitLab, acesse `Settings > Webhooks`, informe `https://seu-dominio.com/webhooks/gitlab`, use o mesmo secret token e marque os eventos de Merge Request.
+
+Para testar localmente, exponha a porta com um túnel:
+
+```bash
+cloudflared tunnel --url http://localhost:3333
+# ou
+ngrok http 3333
+```
+
 ---
 
 ## Seleção Inteligente de LLM
@@ -148,6 +193,10 @@ Estimativa de tokens: `caracteres / 4` — aproximação padrão da indústria, 
 src/
 ├── index.ts          # CLI interativo — prompts, controle de fluxo, ações
 ├── watcher.ts        # Monitor em background — polling, notificações, auto-post
+├── webhook-server.ts # Servidor HTTP para webhooks de Merge Request do GitLab
+├── setup.ts          # Criação guiada do .env inicial
+├── doctor.ts         # Diagnóstico local antes de rodar o revisor
+├── automation.ts     # Comportamento compartilhado de revisão automática
 ├── ai.ts             # Spawna CLIs de IA habilitadas, constrói prompts, parseia JSON
 ├── gitlab.ts         # Wrapper da GitLab API v4
 ├── projects.ts       # Loader de configuração de projetos (lê GITLAB_PROJECTS)
@@ -209,7 +258,11 @@ Veja `CONTRIBUTING.md` para o fluxo de contribuição e `SECURITY.md` para trata
 | Configuração do GitLab ausente | Copie `.env.example` para `.env` e defina `GITLAB_URL`, `GITLAB_TOKEN` e `GITLAB_PROJECTS` |
 | Nenhum provider de IA disponível | Habilite pelo menos um entre `CODEX_ENABLED`, `GEMINI_ENABLED` ou `CODE_ENABLED` |
 | Comando da IA não encontrado | Instale/autentique a CLI ou sobrescreva `*_CMD` e `*_ARGS` no `.env` |
+| Provider habilitado mas não instalado | Rode `npm run doctor` e instale a CLI ou desative `CODEX_ENABLED`, `GEMINI_ENABLED` ou `CODE_ENABLED` |
+| Token GitLab inválido | Confirme que o token tem escopo `api` e não expirou |
+| Projeto GitLab sem permissão | Confirme que o usuário do token pode ler MRs e postar notas em cada entrada de `GITLAB_PROJECTS` |
 | Watcher não posta comentários | Confirme escopo `api` do token, IDs de projeto e permissões no GitLab |
+| Webhook retorna 401 | Confirme que o secret token do GitLab é igual ao `WEBHOOK_SECRET` |
 
 ---
 

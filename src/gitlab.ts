@@ -37,6 +37,11 @@ export async function listOpenMergeRequests(projectId: string): Promise<MergeReq
   );
 }
 
+export async function getMergeRequest(projectId: string, iid: number): Promise<MergeRequest> {
+  const { base, headers } = getConfig(projectId);
+  return request<MergeRequest>(`${base}/merge_requests/${iid}`, { headers });
+}
+
 export async function getMergeRequestChanges(projectId: string, iid: number): Promise<MergeRequestDetail> {
   const { base, headers } = getConfig(projectId);
   return request<MergeRequestDetail>(`${base}/merge_requests/${iid}/changes`, { headers });

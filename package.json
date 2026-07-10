@@ -4,10 +4,13 @@
   "description": "CLI para análise de Merge Requests do GitLab usando Codex, Gemini ou Claude Code local",
   "engines": { "node": ">=18" },
   "scripts": {
+    "setup": "tsx src/setup.ts",
+    "doctor": "tsx src/doctor.ts",
     "review": "tsx src/index.ts",
     "watch": "tsx src/watcher.ts",
+    "webhook": "tsx src/webhook-server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/projects.test.ts tests/usage-tracker.test.ts tests/watcher.test.ts"
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "chalk": "^4.1.2",

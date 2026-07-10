@@ -1,10 +1,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
 import { config } from 'dotenv';
 
-import { listOpenMergeRequests, getMergeRequestChanges, postComment } from './gitlab';
-import { AI_PROVIDERS, analyzeMergeRequest } from './ai';
-import { selectProvider, recordUsage, estimateTokens, getUsageSummary } from './usage-tracker';
+import { listOpenMergeRequests } from './gitlab';
+import { analyzeAndApply, getAutoReviewConfig, notify, printUsage } from './automation';
+import { envInt } from './env-utils';
 import { loadProjects } from './projects';
 import type { MergeRequest, ProjectConfig } from './types';
 
@@ -31,78 +30,10 @@ export function saveState(state: WatcherState, path = STATE_PATH): void {
   writeFileSync(path, JSON.stringify(state, null, 2), 'utf8');
 }
 
-// ─── Notificação cross-platform ───────────────────────────────────────────────
-
-function notify(title: string, message: string): void {
-  const safeTitle   = title.replace(/'/g, '`').replace(/"/g, '`').slice(0, 60);
-  const safeMessage = message.replace(/'/g, '`').replace(/"/g, '`').slice(0, 150);
-
-  try {
-    if (process.platform === 'win32') {
-      execSync(
-        `powershell -Command "` +
-        `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; ` +
-        `$t = [Windows.UI.Notifications.ToastTemplateType]::ToastText02; ` +
-        `$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($t); ` +
-        `$x.GetElementsByTagName('text')[0].AppendChild($x.CreateTextNode('${safeTitle}')) | Out-Null; ` +
-        `$x.GetElementsByTagName('text')[1].AppendChild($x.CreateTextNode('${safeMessage}')) | Out-Null; ` +
-        `$n = [Windows.UI.Notifications.ToastNotification]::new($x); ` +
-        `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('MR Reviewer').Show($n)"`,
-        { stdio: 'ignore' },
-      );
-    } else if (process.platform === 'darwin') {
-      execSync(
-        `osascript -e 'display notification "${safeMessage}" with title "${safeTitle}"'`,
-        { stdio: 'ignore' },
-      );
-    } else {
-      // Linux — requires libnotify-bin (notify-send)
-      execSync(`notify-send "${safeTitle}" "${safeMessage}"`, { stdio: 'ignore' });
-    }
-  } catch {
-    // Notification failure must never interrupt analysis
-  }
-}
-
-// ─── Análise de um MR ─────────────────────────────────────────────────────────
-
-async function analyzeAndPost(project: ProjectConfig, mr: MergeRequest): Promise<void> {
-  const { id: projectId, type: projectType } = project;
-
-  console.log(`   ↳ Buscando diff do MR !${mr.iid}...`);
-  const detail  = await getMergeRequestChanges(projectId, mr.iid);
-  const changes = detail.changes ?? [];
-
-  if (changes.length === 0) {
-    console.log(`   ⚠️  MR !${mr.iid} sem alterações de código — pulando`);
-    return;
-  }
-
-  // Estimativa de tokens: conteúdo do diff + overhead fixo do template de prompt
-  const diffText     = changes.map(c => c.diff).join('\n');
-  const promptTokens = estimateTokens(diffText) + 2_000;
-  const provider     = selectProvider(promptTokens);
-
-  console.log(`   ↳ ~${promptTokens.toLocaleString()} tokens estimados → enviando para ${provider.toUpperCase()}...`);
-
-  const analysis = await analyzeMergeRequest(provider, projectType, mr, changes);
-  recordUsage(provider, promptTokens);
-
-  console.log(`   ↳ Análise concluída. Postando comentário no GitLab...`);
-  await postComment(projectId, mr.iid, analysis.comentario_geral);
-
-  const verdict = analysis.aprovacao_recomendada ? '✅ Aprovado' : '⚠️ Revisão necessária';
-  console.log(`   ✓ ${verdict} | ${analysis.sugestoes.length} sugestão(ões) | Comentário postado em !${mr.iid}`);
-
-  notify(
-    `MR !${mr.iid} — ${verdict}`,
-    `"${mr.title}" by ${mr.author.name} (via ${provider})`,
-  );
-}
-
 // ─── Poll ─────────────────────────────────────────────────────────────────────
 
 export async function poll(projects: ProjectConfig[]): Promise<void> {
+  const config = getAutoReviewConfig();
   const state = loadState();
   let anyNew  = false;
 
@@ -120,7 +51,7 @@ export async function poll(projects: ProjectConfig[]): Promise<void> {
       continue;
     }
 
-    const newMrs = openMrs.filter(mr => !seenIds.includes(mr.iid));
+    const newMrs = filterNewMrs(openMrs, seenIds);
 
     if (newMrs.length === 0) {
       console.log(`[${ts()}] ✓ ${label}: ${openMrs.length} MR(s) aberto(s) — nenhum novo`);
@@ -134,21 +65,28 @@ export async function poll(projects: ProjectConfig[]): Promise<void> {
     }
 
     for (const mr of newMrs) {
-      // Mark as seen immediately to avoid reprocessing on error
+      // Mark as seen immediately to avoid reprocessing on error or disabled automation.
       state.seenMrIds[projectId] = [...(state.seenMrIds[projectId] ?? []), mr.iid];
       saveState(state);
+
+      if (!config.enabled) {
+        console.log(`[${ts()}] - AUTO_REVIEW_ENABLED=false; MR !${mr.iid} registrado sem analise automatica`);
+        notify(`Novo MR: !${mr.iid}`, `"${mr.title}" by ${mr.author.name}`, config.notifyDesktop);
+        continue;
+      }
 
       console.log(`\n[${ts()}] 🔍 Analisando MR !${mr.iid}: "${mr.title}" [${label}]`);
       notify(
         `Novo MR: !${mr.iid}`,
         `"${mr.title}" by ${mr.author.name} — Iniciando análise...`,
+        config.notifyDesktop,
       );
 
       try {
-        await analyzeAndPost(project, mr);
+        await analyzeAndApply(project, mr, config);
       } catch (err) {
         console.error(`[${ts()}] ❌ Falha ao analisar MR !${mr.iid}: ${String(err).slice(0, 300)}`);
-        notify(`Falha — MR !${mr.iid}`, String(err).slice(0, 120));
+        notify(`Falha - MR !${mr.iid}`, String(err).slice(0, 120), config.notifyDesktop);
       }
     }
   }
@@ -197,20 +135,6 @@ function ts(): string {
   return new Date().toLocaleTimeString('pt-BR');
 }
 
-function printUsage(): void {
-  const u = getUsageSummary();
-  console.log(`\n📊 Uso estimado este mês (${u.month}):`);
-
-  for (const key of AI_PROVIDERS) {
-    const p = u[key];
-    const limitText = p.limit > 0
-      ? ` / ${p.limit.toLocaleString()} tokens (${Math.round((p.estimatedTokens / p.limit) * 100)}% usado)`
-      : ' (sem limite configurado)';
-    const status = p.enabled ? 'habilitado' : 'desabilitado';
-    console.log(`   ${key.padEnd(8)}: ${p.estimatedTokens.toLocaleString()} tokens est.${limitText} | ${p.requests} análise(s) | ${status}`);
-  }
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -227,13 +151,24 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const intervalMin = parseInt(process.env.WATCH_INTERVAL_MINUTES ?? '2');
+  const autoConfig = getAutoReviewConfig();
+  if (autoConfig.mode !== 'polling') {
+    console.error('❌ AUTO_REVIEW_MODE=webhook configurado. Use npm run webhook.');
+    process.exit(1);
+  }
+
+  const intervalMin = envInt('WATCH_INTERVAL_MINUTES', 2);
+  if (intervalMin <= 0) {
+    console.error('❌ WATCH_INTERVAL_MINUTES deve ser maior que zero.');
+    process.exit(1);
+  }
   const intervalMs  = intervalMin * 60_000;
 
   printUsage();
   console.log(`\n🔁 Monitorando ${projects.length} projeto(s):`);
   for (const p of projects) console.log(`   [${p.type}] ${p.label} (id: ${p.id})`);
   console.log(`   Intervalo: ${intervalMin} minuto(s)\n`);
+  console.log(`   Auto review: ${autoConfig.enabled ? 'ativo' : 'inativo'} | Comentarios: ${autoConfig.postComment ? 'sim' : 'nao'} | Drafts: ${autoConfig.skipDraft ? 'ignorar' : 'analisar'} | Aprovar: ${autoConfig.approveOnSuccess ? 'sim' : 'nao'} | Merge: ${autoConfig.mergeOnSuccess ? 'sim' : 'nao'}\n`);
 
   await seedInitialState(projects);
 
