@@ -1,10 +1,10 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { config } from 'dotenv';
 
-import { listOpenMergeRequests } from './gitlab';
 import { analyzeAndApply, getAutoReviewConfig, notify, printUsage } from './automation';
 import { envInt } from './env-utils';
 import { loadProjects } from './projects';
+import { listOpenRequests, requestLabel } from './scm';
 import type { MergeRequest, ProjectConfig } from './types';
 
 config();
@@ -39,45 +39,47 @@ export async function poll(projects: ProjectConfig[]): Promise<void> {
 
   for (const project of projects) {
     const { id: projectId, label } = project;
-    const seenIds = state.seenMrIds[projectId] ?? [];
+    const reviewLabel = requestLabel(project);
+    const stateKey = projectStateKey(project);
+    const seenIds = state.seenMrIds[stateKey] ?? [];
 
-    console.log(`[${ts()}] 🔄 Verificando ${label} (projeto ${projectId})...`);
+    console.log(`[${ts()}] 🔄 Verificando ${label} (${project.platform} ${projectId})...`);
 
     let openMrs: MergeRequest[];
     try {
-      openMrs = await listOpenMergeRequests(projectId);
+      openMrs = await listOpenRequests(project);
     } catch (err) {
-      console.error(`[${ts()}] ⚠️  Falha ao buscar MRs de ${label}: ${String(err).slice(0, 200)}`);
+      console.error(`[${ts()}] ⚠️  Falha ao buscar ${reviewLabel}s de ${label}: ${String(err).slice(0, 200)}`);
       continue;
     }
 
     const newMrs = filterNewMrs(openMrs, seenIds);
 
     if (newMrs.length === 0) {
-      console.log(`[${ts()}] ✓ ${label}: ${openMrs.length} MR(s) aberto(s) — nenhum novo`);
+      console.log(`[${ts()}] ✓ ${label}: ${openMrs.length} ${reviewLabel}(s) aberto(s) — nenhum novo`);
       continue;
     }
 
     anyNew = true;
-    console.log(`[${ts()}] 🆕 ${newMrs.length} novo(s) MR(s) em ${label}:`);
+    console.log(`[${ts()}] 🆕 ${newMrs.length} novo(s) ${reviewLabel}(s) em ${label}:`);
     for (const mr of newMrs) {
       console.log(`        !${mr.iid}  "${mr.title}"  — @${mr.author.username}`);
     }
 
     for (const mr of newMrs) {
       // Mark as seen immediately to avoid reprocessing on error or disabled automation.
-      state.seenMrIds[projectId] = [...(state.seenMrIds[projectId] ?? []), mr.iid];
+      state.seenMrIds[stateKey] = [...(state.seenMrIds[stateKey] ?? []), mr.iid];
       saveState(state);
 
       if (!config.enabled) {
-        console.log(`[${ts()}] - AUTO_REVIEW_ENABLED=false; MR !${mr.iid} registrado sem analise automatica`);
-        notify(`Novo MR: !${mr.iid}`, `"${mr.title}" by ${mr.author.name}`, config.notifyDesktop);
+        console.log(`[${ts()}] - AUTO_REVIEW_ENABLED=false; ${reviewLabel} !${mr.iid} registrado sem analise automatica`);
+        notify(`Novo ${reviewLabel}: !${mr.iid}`, `"${mr.title}" by ${mr.author.name}`, config.notifyDesktop);
         continue;
       }
 
-      console.log(`\n[${ts()}] 🔍 Analisando MR !${mr.iid}: "${mr.title}" [${label}]`);
+      console.log(`\n[${ts()}] 🔍 Analisando ${reviewLabel} !${mr.iid}: "${mr.title}" [${label}]`);
       notify(
-        `Novo MR: !${mr.iid}`,
+        `Novo ${reviewLabel}: !${mr.iid}`,
         `"${mr.title}" by ${mr.author.name} — Iniciando análise...`,
         config.notifyDesktop,
       );
@@ -85,8 +87,8 @@ export async function poll(projects: ProjectConfig[]): Promise<void> {
       try {
         await analyzeAndApply(project, mr, config);
       } catch (err) {
-        console.error(`[${ts()}] ❌ Falha ao analisar MR !${mr.iid}: ${String(err).slice(0, 300)}`);
-        notify(`Falha - MR !${mr.iid}`, String(err).slice(0, 120), config.notifyDesktop);
+        console.error(`[${ts()}] ❌ Falha ao analisar ${reviewLabel} !${mr.iid}: ${String(err).slice(0, 300)}`);
+        notify(`Falha - ${reviewLabel} !${mr.iid}`, String(err).slice(0, 120), config.notifyDesktop);
       }
     }
   }
@@ -102,21 +104,24 @@ export async function seedInitialState(projects: ProjectConfig[]): Promise<void>
   const state  = loadState();
   let   seeded = false;
 
-  for (const { id: projectId, label } of projects) {
-    if (state.seenMrIds[projectId] !== undefined) {
-      console.log(`[init] ${label}: estado já existe (${state.seenMrIds[projectId].length} MR(s) registrado(s))`);
+  for (const project of projects) {
+    const { label } = project;
+    const reviewLabel = requestLabel(project);
+    const stateKey = projectStateKey(project);
+    if (state.seenMrIds[stateKey] !== undefined) {
+      console.log(`[init] ${label}: estado já existe (${state.seenMrIds[stateKey].length} ${reviewLabel}(s) registrado(s))`);
       continue;
     }
 
-    console.log(`[init] ${label}: carregando MRs abertos...`);
+    console.log(`[init] ${label}: carregando ${reviewLabel}s abertos...`);
     try {
-      const openMrs = await listOpenMergeRequests(projectId);
-      state.seenMrIds[projectId] = openMrs.map(mr => mr.iid);
-      console.log(`[init] ${label}: ${openMrs.length} MR(s) existente(s) marcado(s) como já vistos — não serão re-analisados`);
+      const openMrs = await listOpenRequests(project);
+      state.seenMrIds[stateKey] = openMrs.map(mr => mr.iid);
+      console.log(`[init] ${label}: ${openMrs.length} ${reviewLabel}(s) existente(s) marcado(s) como já vistos — não serão re-analisados`);
       seeded = true;
     } catch (err) {
-      console.error(`[init] ⚠️  Erro ao carregar MRs de ${label}: ${String(err).slice(0, 200)}`);
-      state.seenMrIds[projectId] = [];
+      console.error(`[init] ⚠️  Erro ao carregar ${reviewLabel}s de ${label}: ${String(err).slice(0, 200)}`);
+      state.seenMrIds[stateKey] = [];
     }
   }
 
@@ -129,6 +134,10 @@ export function filterNewMrs(openMrs: MergeRequest[], seenIds: number[]): MergeR
   return openMrs.filter(mr => !seenIds.includes(mr.iid));
 }
 
+function projectStateKey(project: ProjectConfig): string {
+  return `${project.platform}:${project.id}`;
+}
+
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
 function ts(): string {
@@ -139,15 +148,15 @@ function ts(): string {
 
 async function main(): Promise<void> {
   console.log('┌──────────────────────────────────────────┐');
-  console.log('│  MR Reviewer — Watcher                   │');
+  console.log('│  CLI Reviewer — Watcher                  │');
   console.log('│  Ctrl+C para encerrar                    │');
   console.log('└──────────────────────────────────────────┘');
 
   const projects = loadProjects();
 
   if (projects.length === 0) {
-    console.error('❌ Nenhum projeto configurado. Defina GITLAB_PROJECTS no .env');
-    console.error('   Exemplo: GITLAB_PROJECTS=133:front:Frontend,134:api:API .NET');
+    console.error('❌ Nenhum projeto configurado. Defina GITLAB_PROJECTS ou GITHUB_REPOSITORIES no .env');
+    console.error('   Exemplo: GITLAB_PROJECTS=133:front:Frontend ou GITHUB_REPOSITORIES=owner/repo:generic:CLI');
     process.exit(1);
   }
 
@@ -166,7 +175,7 @@ async function main(): Promise<void> {
 
   printUsage();
   console.log(`\n🔁 Monitorando ${projects.length} projeto(s):`);
-  for (const p of projects) console.log(`   [${p.type}] ${p.label} (id: ${p.id})`);
+  for (const p of projects) console.log(`   [${p.platform}/${p.type}] ${p.label} (id: ${p.id})`);
   console.log(`   Intervalo: ${intervalMin} minuto(s)\n`);
   console.log(`   Auto review: ${autoConfig.enabled ? 'ativo' : 'inativo'} | Comentarios: ${autoConfig.postComment ? 'sim' : 'nao'} | Drafts: ${autoConfig.skipDraft ? 'ignorar' : 'analisar'} | Aprovar: ${autoConfig.approveOnSuccess ? 'sim' : 'nao'} | Merge: ${autoConfig.mergeOnSuccess ? 'sim' : 'nao'}\n`);
 

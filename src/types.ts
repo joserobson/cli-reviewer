@@ -1,9 +1,11 @@
 export type ProjectType = 'front' | 'api' | 'generic';
+export type ProjectPlatform = 'gitlab' | 'github';
 
 export interface ProjectConfig {
   id: string;
   type: ProjectType;
   label: string;
+  platform: ProjectPlatform;
 }
 
 export interface MergeRequest {
@@ -33,7 +35,7 @@ export interface FileChange {
 
 export interface MergeRequestDetail extends MergeRequest {
   changes: FileChange[];
-  diff_refs: {
+  diff_refs?: {
     base_sha: string;
     head_sha: string;
     start_sha: string;

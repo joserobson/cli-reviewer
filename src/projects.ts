@@ -1,41 +1,49 @@
-import type { ProjectConfig, ProjectType } from './types';
+import type { ProjectConfig, ProjectPlatform, ProjectType } from './types';
 
 const VALID_TYPES: ProjectType[] = ['front', 'api', 'generic'];
 
 /**
  * Reads project configuration from environment variables.
  *
- * Preferred format (supports any number of projects):
+ * Preferred GitLab format (supports any number of projects):
  *   GITLAB_PROJECTS=133:front:Frontend Angular,134:api:API .NET,135:generic:Mobile BFF
+ *
+ * GitHub format:
+ *   GITHUB_REPOSITORIES=owner/repo:generic:CLI Reviewer,org/api:api:Backend
  *
  * Legacy fallback (still supported for backward compatibility):
  *   GITLAB_PROJECT_ID=133
  *   GITLAB_API_PROJECT_ID=134
  */
 export function loadProjects(): ProjectConfig[] {
-  const raw = process.env.GITLAB_PROJECTS?.trim();
+  const projects: ProjectConfig[] = [];
+  const rawGitLab = process.env.GITLAB_PROJECTS?.trim();
+  const rawGitHub = process.env.GITHUB_REPOSITORIES?.trim();
 
-  if (raw) {
-    return parseProjectsEnv(raw);
+  if (rawGitLab) {
+    projects.push(...parseProjectsEnv(rawGitLab, 'gitlab'));
   }
 
-  // Legacy fallback
-  const projects: ProjectConfig[] = [];
+  if (rawGitHub) {
+    projects.push(...parseProjectsEnv(rawGitHub, 'github'));
+  }
+
+  if (projects.length > 0) return projects;
 
   const frontId = process.env.GITLAB_PROJECT_ID?.trim();
   if (frontId) {
-    projects.push({ id: frontId, type: 'front', label: 'Frontend Angular' });
+    projects.push({ id: frontId, type: 'front', label: 'Frontend Angular', platform: 'gitlab' });
   }
 
   const apiId = process.env.GITLAB_API_PROJECT_ID?.trim();
   if (apiId) {
-    projects.push({ id: apiId, type: 'api', label: 'API .NET' });
+    projects.push({ id: apiId, type: 'api', label: 'API .NET', platform: 'gitlab' });
   }
 
   return projects;
 }
 
-function parseProjectsEnv(raw: string): ProjectConfig[] {
+function parseProjectsEnv(raw: string, platform: ProjectPlatform): ProjectConfig[] {
   const projects: ProjectConfig[] = [];
 
   for (const entry of raw.split(',')) {
@@ -57,7 +65,7 @@ function parseProjectsEnv(raw: string): ProjectConfig[] {
     }
 
     const label = labelParts.join(':').trim() || `Project ${id}`;
-    projects.push({ id: id.trim(), type, label });
+    projects.push({ id: id.trim(), type, label, platform });
   }
 
   return projects;

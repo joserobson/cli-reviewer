@@ -1,6 +1,6 @@
-# MR Reviewer
+# CLI Reviewer
 
-> Revisor de Merge Requests do GitLab com IA — roda completamente na sua máquina usando CLIs locais de IA.
+> Revisor de Merge Requests do GitLab e Pull Requests do GitHub com IA — roda completamente na sua máquina usando CLIs locais de IA.
 
 **[Read in English](README.md)**
 
@@ -8,13 +8,13 @@
 
 ## O que faz
 
-O MR Reviewer conecta ao seu GitLab, busca os Merge Requests abertos, envia o diff para uma CLI de IA local (Codex, Gemini ou Claude Code) e devolve uma revisão de código estruturada em segundos. Funciona em três modos:
+O CLI Reviewer conecta ao GitLab e ao GitHub, busca Merge Requests ou Pull Requests abertos, envia o diff para uma CLI de IA local (Codex, Gemini ou Claude Code) e devolve uma revisão de código estruturada em segundos. Funciona em três modos:
 
 - **CLI interativo** — você escolhe os MRs manualmente, revisa os resultados e aprova/comenta/faz merge direto do terminal.
-- **Watcher** — faz polling em segundo plano, detecta novos MRs automaticamente, posta a revisão como comentário no GitLab e envia uma notificação no desktop.
-- **Servidor de webhook** — recebe eventos de Merge Request do GitLab para automação quase em tempo real em servidor/VPS.
+- **Watcher** — faz polling em segundo plano, detecta novos MRs/PRs automaticamente, posta a revisão como comentário na plataforma e envia uma notificação no desktop.
+- **Servidor de webhook** — recebe eventos de Merge Request do GitLab e Pull Request do GitHub para automação quase em tempo real em servidor/VPS.
 
-Como executa a CLI local configurada, os dados da revisão ficam na sua máquina, exceto pelas chamadas necessárias à API do GitLab para buscar diffs e postar comentários.
+Como executa a CLI local configurada, os dados da revisão ficam na sua máquina, exceto pelas chamadas necessárias às APIs do GitLab/GitHub para buscar diffs e postar comentários.
 
 ---
 
@@ -24,7 +24,7 @@ Como executa a CLI local configurada, os dados da revisão ficam na sua máquina
 - Detecta padrões problemáticos: `setTimeout` em componentes, queries N+1, `async void`, manipulação direta do DOM e muito mais
 - Sugestões classificadas por severidade: **crítico / aviso / sugestão**
 - Análise paralela de múltiplos MRs simultaneamente
-- Posta automaticamente a revisão completa como comentário formatado no GitLab
+- Posta automaticamente a revisão completa como comentário formatado no GitLab/GitHub
 - Seletor inteligente de LLM: rastreia o uso estimado de tokens por mês e roteia automaticamente para o provider com maior capacidade restante
 - Reset mensal automático; limites configuráveis por provider
 
@@ -39,6 +39,7 @@ Como executa a CLI local configurada, os dados da revisão ficam na sua máquina
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Provider opcional; deve estar instalado e autenticado se habilitado |
 | Claude Code / Claude CLI | Provider opcional; deve estar instalado e autenticado se habilitado |
 | Personal Access Token do GitLab | Escopo: `api` |
+| Token do GitHub | Opcional para ler PRs públicos; necessário para comentar, aprovar ou fazer merge |
 | Notificações desktop (só Watcher) | Windows nativo · macOS nativo · Linux: `sudo apt install libnotify-bin` |
 
 Você precisa de apenas uma CLI de IA habilitada. Ter múltiplos providers ativa o seletor inteligente.
@@ -52,7 +53,7 @@ git clone https://github.com/seu-usuario/mr-reviewer.git
 cd mr-reviewer
 npm install
 cp .env.example .env
-# Edite o .env com suas credenciais do GitLab
+# Edite o .env com suas credenciais do GitLab/GitHub
 npm run doctor
 npm test
 npm run typecheck
@@ -71,9 +72,9 @@ npm run setup
 npm run doctor
 ```
 
-Escolha **local** para revisões sob demanda ou automação simples por polling na sua máquina. Escolha **servidor/VPS** para automação contínua com webhooks do GitLab.
+Escolha **local** para revisões sob demanda ou automação simples por polling na sua máquina. Escolha **servidor/VPS** para automação contínua com webhooks do GitLab/GitHub.
 
-`npm run doctor` valida Node.js, `.env`, configuração do GitLab, projetos configurados, providers habilitados, comandos das CLIs e as opções específicas de polling/webhook.
+`npm run doctor` valida Node.js, `.env`, configuração do GitLab/GitHub, projetos configurados, providers habilitados, comandos das CLIs e as opções específicas de polling/webhook.
 
 ---
 
@@ -84,10 +85,13 @@ Edite o `.env`:
 ```env
 GITLAB_URL=https://seu-gitlab.exemplo.com
 GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+GITHUB_TOKEN=github_pat_xxxxxxxxxxxxxxxxxxxx
+GITHUB_API_URL=https://api.github.com
 
-# Um ou mais projetos — formato: id:tipo:label (separados por vírgula)
+# Um ou mais projetos/repositórios — formato: id:tipo:label (separados por vírgula)
 # Tipos suportados: front (Angular), api (.NET C#), generic (qualquer linguagem)
 GITLAB_PROJECTS=133:front:Frontend Angular,134:api:API .NET
+GITHUB_REPOSITORIES=owner/repo:generic:CLI Reviewer
 
 # Habilite uma ou mais CLIs locais de IA
 CODEX_ENABLED=true
@@ -113,6 +117,7 @@ AUTO_REVIEW_MERGE_ON_SUCCESS=false
 WATCH_INTERVAL_MINUTES=2
 WEBHOOK_PORT=3333
 WEBHOOK_SECRET=change-me
+GITHUB_WEBHOOK_SECRET=change-me
 WATCH_CODEX_MONTHLY_TOKENS=0
 WATCH_GEMINI_MONTHLY_TOKENS=0
 WATCH_CODE_MONTHLY_TOKENS=0
@@ -143,7 +148,7 @@ Fluxo:
 npm run watch
 ```
 
-O watcher faz polling no GitLab a cada `WATCH_INTERVAL_MINUTES` minutos. Quando um novo MR é aberto:
+O watcher faz polling no GitLab/GitHub a cada `WATCH_INTERVAL_MINUTES` minutos. Quando um novo MR/PR é aberto:
 
 1. Envia uma notificação no desktop
 2. Busca o diff e executa a análise automaticamente
@@ -161,7 +166,7 @@ Defina `AUTO_REVIEW_ENABLED=true` para permitir que `npm run watch` analise e po
 npm run webhook
 ```
 
-Configure `AUTO_REVIEW_ENABLED=true`, `AUTO_REVIEW_MODE=webhook`, `WEBHOOK_PORT` e `WEBHOOK_SECRET`. No GitLab, acesse `Settings > Webhooks`, informe `https://seu-dominio.com/webhooks/gitlab`, use o mesmo secret token e marque os eventos de Merge Request.
+Configure `AUTO_REVIEW_ENABLED=true`, `AUTO_REVIEW_MODE=webhook`, `WEBHOOK_PORT` e `WEBHOOK_SECRET`. No GitLab, acesse `Settings > Webhooks`, informe `https://seu-dominio.com/webhooks/gitlab`, use o mesmo secret token e marque os eventos de Merge Request. No GitHub, informe `https://seu-dominio.com/webhooks/github`, configure `GITHUB_WEBHOOK_SECRET` e marque eventos de Pull request.
 
 Para testar localmente, exponha a porta com um túnel:
 
@@ -193,13 +198,15 @@ Estimativa de tokens: `caracteres / 4` — aproximação padrão da indústria, 
 src/
 ├── index.ts          # CLI interativo — prompts, controle de fluxo, ações
 ├── watcher.ts        # Monitor em background — polling, notificações, auto-post
-├── webhook-server.ts # Servidor HTTP para webhooks de Merge Request do GitLab
+├── webhook-server.ts # Servidor HTTP para webhooks do GitLab/GitHub
 ├── setup.ts          # Criação guiada do .env inicial
 ├── doctor.ts         # Diagnóstico local antes de rodar o revisor
 ├── automation.ts     # Comportamento compartilhado de revisão automática
 ├── ai.ts             # Spawna CLIs de IA habilitadas, constrói prompts, parseia JSON
 ├── gitlab.ts         # Wrapper da GitLab API v4
-├── projects.ts       # Loader de configuração de projetos (lê GITLAB_PROJECTS)
+├── github.ts         # Wrapper da REST API do GitHub
+├── scm.ts            # Roteador de plataforma para operacoes GitLab/GitHub
+├── projects.ts       # Loader de configuração de projetos
 ├── usage-tracker.ts  # Rastreamento de tokens + seleção inteligente de provider
 ├── display.ts        # Saída no terminal — banner, spinners, formatação da análise
 └── types.ts          # Interfaces TypeScript compartilhadas
@@ -214,21 +221,21 @@ Validação de env → Seleção de projeto/provider → Lista MRs → Seleciona
 
 **Fluxo de dados (Watcher):**
 ```
-Poll GitLab → Novo MR detectado → Estima tokens → Seleciona provider
+Poll GitLab/GitHub → Novo MR/PR detectado → Estima tokens → Seleciona provider
     → Busca diff → Spawna CLI de IA → Parseia JSON → Posta comentário → Notifica
 ```
 
 ---
 
-## Endpoints GitLab utilizados
+## Endpoints de plataforma utilizados
 
 | Método | Endpoint | Finalidade |
 |---|---|---|
-| GET | `/merge_requests?state=opened` | Listar MRs abertos |
-| GET | `/merge_requests/:iid/changes` | Buscar diff |
-| POST | `/merge_requests/:iid/approve` | Aprovar |
-| POST | `/merge_requests/:iid/notes` | Postar comentário |
-| PUT | `/merge_requests/:iid/merge` | Fazer merge |
+| GET | GitLab `/merge_requests?state=opened` / GitHub `/pulls?state=open` | Listar reviews abertas |
+| GET | GitLab `/merge_requests/:iid/changes` / GitHub `/pulls/:number/files` | Buscar diff |
+| POST | GitLab `/merge_requests/:iid/approve` / GitHub `/pulls/:number/reviews` | Aprovar |
+| POST | GitLab `/merge_requests/:iid/notes` / GitHub `/issues/:number/comments` | Postar comentário |
+| PUT | GitLab `/merge_requests/:iid/merge` / GitHub `/pulls/:number/merge` | Fazer merge |
 
 ---
 
@@ -256,13 +263,15 @@ Veja `CONTRIBUTING.md` para o fluxo de contribuição e `SECURITY.md` para trata
 | Problema | Verifique |
 |---|---|
 | Configuração do GitLab ausente | Copie `.env.example` para `.env` e defina `GITLAB_URL`, `GITLAB_TOKEN` e `GITLAB_PROJECTS` |
+| Configuração do GitHub ausente | Defina `GITHUB_REPOSITORIES`; defina `GITHUB_TOKEN` para comentários, aprovações ou merge |
 | Nenhum provider de IA disponível | Habilite pelo menos um entre `CODEX_ENABLED`, `GEMINI_ENABLED` ou `CODE_ENABLED` |
 | Comando da IA não encontrado | Instale/autentique a CLI ou sobrescreva `*_CMD` e `*_ARGS` no `.env` |
 | Provider habilitado mas não instalado | Rode `npm run doctor` e instale a CLI ou desative `CODEX_ENABLED`, `GEMINI_ENABLED` ou `CODE_ENABLED` |
 | Token GitLab inválido | Confirme que o token tem escopo `api` e não expirou |
 | Projeto GitLab sem permissão | Confirme que o usuário do token pode ler MRs e postar notas em cada entrada de `GITLAB_PROJECTS` |
+| Repositório GitHub sem permissão | Confirme que o token pode ler PRs e escrever reviews/comentários |
 | Watcher não posta comentários | Confirme escopo `api` do token, IDs de projeto e permissões no GitLab |
-| Webhook retorna 401 | Confirme que o secret token do GitLab é igual ao `WEBHOOK_SECRET` |
+| Webhook retorna 401 | Confirme que o token do GitLab é igual ao `WEBHOOK_SECRET` ou que a assinatura GitHub usa `GITHUB_WEBHOOK_SECRET` |
 
 ---
 

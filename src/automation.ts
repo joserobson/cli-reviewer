@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 
-import { approveMergeRequest, getMergeRequestChanges, mergeMergeRequest, postComment } from './gitlab';
 import { AI_PROVIDERS, analyzeMergeRequest } from './ai';
+import { approveRequest, getRequestChanges, mergeRequest, postRequestComment, requestLabel } from './scm';
 import { selectProvider, recordUsage, estimateTokens, getUsageSummary } from './usage-tracker';
 import { envFlag } from './env-utils';
 import type { MergeRequest, ProjectConfig } from './types';
@@ -51,7 +51,7 @@ export function notify(title: string, message: string, enabled = getAutoReviewCo
         `$x.GetElementsByTagName('text')[0].AppendChild($x.CreateTextNode('${safeTitle}')) | Out-Null; ` +
         `$x.GetElementsByTagName('text')[1].AppendChild($x.CreateTextNode('${safeMessage}')) | Out-Null; ` +
         `$n = [Windows.UI.Notifications.ToastNotification]::new($x); ` +
-        `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('MR Reviewer').Show($n)"`,
+        `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('CLI Reviewer').Show($n)"`,
         { stdio: 'ignore' },
       );
     } else if (process.platform === 'darwin') {
@@ -66,19 +66,20 @@ export function notify(title: string, message: string, enabled = getAutoReviewCo
 
 export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, config = getAutoReviewConfig()): Promise<void> {
   const skipReason = shouldSkipMergeRequest(mr, config);
+  const label = requestLabel(project);
   if (skipReason) {
-    console.log(`   - MR !${mr.iid} ignorado (${skipReason})`);
+    console.log(`   - ${label} !${mr.iid} ignorado (${skipReason})`);
     return;
   }
 
-  const { id: projectId, type: projectType } = project;
+  const { type: projectType } = project;
 
-  console.log(`   -> Buscando diff do MR !${mr.iid}...`);
-  const detail = await getMergeRequestChanges(projectId, mr.iid);
+  console.log(`   -> Buscando diff do ${label} !${mr.iid}...`);
+  const detail = await getRequestChanges(project, mr.iid);
   const changes = detail.changes ?? [];
 
   if (changes.length === 0) {
-    console.log(`   - MR !${mr.iid} sem alteracoes de codigo; pulando`);
+    console.log(`   - ${label} !${mr.iid} sem alteracoes de codigo; pulando`);
     return;
   }
 
@@ -92,27 +93,27 @@ export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, 
   recordUsage(provider, promptTokens);
 
   if (config.postComment) {
-    console.log('   -> Postando comentario no GitLab...');
-    await postComment(projectId, mr.iid, analysis.comentario_geral);
+    console.log(`   -> Postando comentario no ${project.platform}...`);
+    await postRequestComment(project, mr.iid, analysis.comentario_geral);
   } else {
     console.log('   - Comentario automatico desabilitado por AUTO_REVIEW_POST_COMMENT=false');
   }
 
   if (analysis.aprovacao_recomendada && config.approveOnSuccess) {
-    console.log('   -> Aprovando MR no GitLab...');
-    await approveMergeRequest(projectId, mr.iid);
+    console.log(`   -> Aprovando ${label} no ${project.platform}...`);
+    await approveRequest(project, mr.iid);
   }
 
   if (analysis.aprovacao_recomendada && config.mergeOnSuccess) {
-    console.log('   -> Disparando merge no GitLab...');
-    await mergeMergeRequest(projectId, mr.iid);
+    console.log(`   -> Disparando merge no ${project.platform}...`);
+    await mergeRequest(project, mr.iid);
   }
 
   const verdict = analysis.aprovacao_recomendada ? 'Aprovado' : 'Revisao necessaria';
-  console.log(`   OK ${verdict} | ${analysis.sugestoes.length} sugestao(oes) | MR !${mr.iid}`);
+  console.log(`   OK ${verdict} | ${analysis.sugestoes.length} sugestao(oes) | ${label} !${mr.iid}`);
 
   notify(
-    `MR !${mr.iid} - ${verdict}`,
+    `${label} !${mr.iid} - ${verdict}`,
     `"${mr.title}" by ${mr.author.name} (via ${provider})`,
     config.notifyDesktop,
   );

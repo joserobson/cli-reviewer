@@ -22,7 +22,7 @@ export function displayBanner(provider?: AIProvider): void {
   console.clear();
   const label = provider ? PROVIDER_LABEL[provider] : '          ';
   console.log(chalk.bold.cyan('\n  ╔══════════════════════════════════════════╗'));
-  console.log(chalk.bold.cyan(`  ║   🤖  MR Reviewer  —  ${label}          ║`));
+  console.log(chalk.bold.cyan(`  ║   🤖  CLI Reviewer —  ${label}          ║`));
   console.log(chalk.bold.cyan('  ╚══════════════════════════════════════════╝\n'));
 }
 

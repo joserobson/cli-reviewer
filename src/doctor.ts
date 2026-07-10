@@ -31,7 +31,7 @@ function statusMark(status: Status): string {
 }
 
 function print(checks: Check[]): void {
-  console.log('\nMR Reviewer doctor\n');
+  console.log('\nCLI Reviewer doctor\n');
   for (const check of checks) {
     console.log(`${statusMark(check.status)}  ${check.label}: ${check.detail}`);
   }
@@ -58,25 +58,83 @@ function main(): void {
     detail: `v${process.versions.node}${nodeMajor >= 18 ? '' : '; requer >=18'}`,
   });
 
-  checks.push({
-    label: 'GITLAB_URL',
-    status: process.env.GITLAB_URL ? 'ok' : 'fail',
-    detail: process.env.GITLAB_URL ? process.env.GITLAB_URL : 'ausente',
-  });
-  checks.push({
-    label: 'GITLAB_TOKEN',
-    status: process.env.GITLAB_TOKEN ? 'ok' : 'fail',
-    detail: maskSecret(process.env.GITLAB_TOKEN),
-  });
-
   const projects = loadProjects();
+  const gitlabProjects = projects.filter(p => p.platform === 'gitlab');
+  const githubProjects = projects.filter(p => p.platform === 'github');
   checks.push({
-    label: 'GITLAB_PROJECTS',
+    label: 'Projects',
     status: projects.length > 0 ? 'ok' : 'fail',
     detail: projects.length > 0
-      ? `${projects.length} projeto(s): ${projects.map(p => `${p.id}:${p.type}`).join(', ')}`
-      : 'configure ao menos um projeto no formato id:front|api|generic:label',
+      ? `${projects.length} projeto(s): ${projects.map(p => `${p.platform}:${p.id}:${p.type}`).join(', ')}`
+      : 'configure GITLAB_PROJECTS ou GITHUB_REPOSITORIES no formato id:front|api|generic:label',
   });
+
+  if (gitlabProjects.length > 0) {
+    checks.push({
+      label: 'GITLAB_URL',
+      status: process.env.GITLAB_URL ? 'ok' : 'fail',
+      detail: process.env.GITLAB_URL ? process.env.GITLAB_URL : 'ausente',
+    });
+    checks.push({
+      label: 'GITLAB_TOKEN',
+      status: process.env.GITLAB_TOKEN ? 'ok' : 'fail',
+      detail: maskSecret(process.env.GITLAB_TOKEN),
+    });
+  }
+
+  if (githubProjects.length > 0) {
+    checks.push({
+      label: 'GITHUB_TOKEN',
+      status: process.env.GITHUB_TOKEN ? 'ok' : 'warn',
+      detail: process.env.GITHUB_TOKEN
+        ? maskSecret(process.env.GITHUB_TOKEN)
+        : 'ausente; leitura de repos publicos pode funcionar, mas comentar/aprovar/merge requer token',
+    });
+    checks.push({
+      label: 'GITHUB_API_URL',
+      status: 'ok',
+      detail: process.env.GITHUB_API_URL ?? 'https://api.github.com',
+    });
+    if (process.env.GITHUB_WEBHOOK_SECRET) {
+      checks.push({
+        label: 'GITHUB_WEBHOOK_SECRET',
+        status: 'ok',
+        detail: maskSecret(process.env.GITHUB_WEBHOOK_SECRET),
+      });
+    }
+  }
+
+  if (process.env.GITLAB_PROJECTS && gitlabProjects.length === 0) {
+    checks.push({
+      label: 'GITLAB_PROJECTS',
+      status: 'fail',
+      detail: 'nenhuma entrada valida encontrada',
+    });
+  }
+
+  if (process.env.GITHUB_REPOSITORIES && githubProjects.length === 0) {
+    checks.push({
+      label: 'GITHUB_REPOSITORIES',
+      status: 'fail',
+      detail: 'nenhuma entrada valida encontrada',
+    });
+  }
+
+  for (const project of githubProjects) {
+    checks.push({
+      label: `GitHub repo ${project.id}`,
+      status: /^[^/]+\/[^/]+$/.test(project.id) ? 'ok' : 'fail',
+      detail: /^[^/]+\/[^/]+$/.test(project.id) ? project.label : 'use owner/repo',
+    });
+  }
+
+  for (const project of gitlabProjects) {
+    checks.push({
+      label: `GitLab project ${project.id}`,
+      status: 'ok',
+      detail: project.label,
+    });
+  }
 
   const providers = getProviders();
   const enabled = Object.entries(providers).filter(([, cfg]) => cfg.enabled);

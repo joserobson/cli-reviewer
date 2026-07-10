@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { config } from 'dotenv';
-import prompts from 'prompts';
+import prompts, { type PromptObject } from 'prompts';
 
 config();
 
-const REQUIRED_ENV = ['GITLAB_URL', 'GITLAB_TOKEN', 'GITLAB_PROJECTS'];
+const REQUIRED_ENV = ['GITLAB_PROJECTS', 'GITHUB_REPOSITORIES'];
 
 function mergeEnvContent(base: string, updates: Record<string, string>): string {
   const lines = base.split(/\r?\n/);
@@ -30,13 +30,13 @@ function mergeEnvContent(base: string, updates: Record<string, string>): string 
 }
 
 async function main(): Promise<void> {
-  console.log('\nMR Reviewer setup\n');
+  console.log('\nCLI Reviewer setup\n');
 
   const { environment } = await prompts(
     {
       type: 'select',
       name: 'environment',
-      message: 'Onde voce pretende rodar o MR Reviewer?',
+      message: 'Onde voce pretende rodar o CLI Reviewer?',
       choices: [
         {
           title: 'Localmente na minha maquina',
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
         },
         {
           title: 'Em um servidor/VPS',
-          description: 'Automacao continua com webhook do GitLab.',
+          description: 'Automacao continua com webhooks do GitLab e/ou GitHub.',
           value: 'server',
         },
       ],
@@ -55,12 +55,12 @@ async function main(): Promise<void> {
 
   const envExists = existsSync('.env');
   if (envExists) {
-    const missing = REQUIRED_ENV.filter(key => !process.env[key]);
+    const hasProjectConfig = REQUIRED_ENV.some(key => Boolean(process.env[key]));
     console.log('.env encontrado; nao vou sobrescrever automaticamente.');
-    if (missing.length > 0) {
-      console.log(`Variaveis obrigatorias ausentes: ${missing.join(', ')}`);
+    if (!hasProjectConfig) {
+      console.log('Nenhum projeto configurado. Defina GITLAB_PROJECTS ou GITHUB_REPOSITORIES.');
     } else {
-      console.log('Variaveis obrigatorias presentes.');
+      console.log('Configuracao de projetos encontrada.');
     }
     console.log(environment === 'server'
       ? 'Para servidor, confirme AUTO_REVIEW_MODE=webhook, WEBHOOK_PORT e WEBHOOK_SECRET.'
@@ -83,8 +83,26 @@ async function main(): Promise<void> {
     return;
   }
 
-  const answers = await prompts(
-    [
+  const { platforms } = await prompts(
+    {
+      type: 'multiselect',
+      name: 'platforms',
+      message: 'Quais plataformas deseja configurar?',
+      choices: [
+        { title: 'GitLab Merge Requests', value: 'gitlab', selected: true },
+        { title: 'GitHub Pull Requests', value: 'github', selected: false },
+      ],
+      min: 1,
+    },
+    { onCancel: () => process.exit(0) },
+  ) as { platforms: Array<'gitlab' | 'github'> };
+
+  const wantsGitLab = platforms.includes('gitlab');
+  const wantsGitHub = platforms.includes('github');
+
+  const platformPrompts: PromptObject[] = [];
+  if (wantsGitLab) {
+    platformPrompts.push(
       {
         type: 'text',
         name: 'gitlabUrl',
@@ -102,6 +120,28 @@ async function main(): Promise<void> {
         message: 'GITLAB_PROJECTS (ex: 133:front:Frontend,134:api:API)',
         initial: process.env.GITLAB_PROJECTS ?? '133:front:Frontend Angular',
       },
+    );
+  }
+
+  if (wantsGitHub) {
+    platformPrompts.push(
+      {
+        type: 'password',
+        name: 'githubToken',
+        message: 'GITHUB_TOKEN (opcional para leitura de repos publicos; necessario para comentar/aprovar/merge)',
+      },
+      {
+        type: 'text',
+        name: 'githubRepositories',
+        message: 'GITHUB_REPOSITORIES (ex: owner/repo:generic:CLI Reviewer)',
+        initial: process.env.GITHUB_REPOSITORIES ?? 'owner/repo:generic:CLI Reviewer',
+      },
+    );
+  }
+
+  const answers = await prompts(
+    [
+      ...platformPrompts,
       {
         type: 'confirm',
         name: 'codexEnabled',
@@ -123,22 +163,32 @@ async function main(): Promise<void> {
     ],
     { onCancel: () => process.exit(0) },
   ) as {
-    gitlabUrl: string;
-    gitlabToken: string;
-    gitlabProjects: string;
+    gitlabUrl?: string;
+    gitlabToken?: string;
+    gitlabProjects?: string;
+    githubToken?: string;
+    githubRepositories?: string;
     codexEnabled: boolean;
     geminiEnabled: boolean;
     codeEnabled: boolean;
   };
 
   const updates: Record<string, string> = {
-    GITLAB_URL: answers.gitlabUrl.trim(),
-    GITLAB_TOKEN: answers.gitlabToken.trim(),
-    GITLAB_PROJECTS: answers.gitlabProjects.trim(),
     CODEX_ENABLED: String(answers.codexEnabled),
     GEMINI_ENABLED: String(answers.geminiEnabled),
     CODE_ENABLED: String(answers.codeEnabled),
   };
+
+  if (wantsGitLab) {
+    updates.GITLAB_URL = answers.gitlabUrl?.trim() ?? '';
+    updates.GITLAB_TOKEN = answers.gitlabToken?.trim() ?? '';
+    updates.GITLAB_PROJECTS = answers.gitlabProjects?.trim() ?? '';
+  }
+
+  if (wantsGitHub) {
+    updates.GITHUB_TOKEN = answers.githubToken?.trim() ?? '';
+    updates.GITHUB_REPOSITORIES = answers.githubRepositories?.trim() ?? '';
+  }
 
   if (environment === 'server') {
     Object.assign(updates, {

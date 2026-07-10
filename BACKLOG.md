@@ -362,6 +362,58 @@ ngrok http 3333
 
 **Concluido quando:** um evento real do GitLab dispara review automatico via webhook, valida o segredo e nao duplica comentarios.
 
+## Etapa 10: Suportar GitHub Pull Requests alem de GitLab Merge Requests
+
+### 10.1 Configurar repositorios GitHub
+
+Adicionar suporte a:
+
+```env
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+GITHUB_REPOSITORIES=owner/repo:generic:CLI Reviewer,org/api:api:Backend
+```
+
+`GITHUB_TOKEN` deve ser opcional para leitura de Pull Requests publicos, mas obrigatorio para comentar, aprovar ou fazer merge.
+
+### 10.2 Criar camada comum de plataforma
+
+Extrair as operacoes usadas pelo revisor para uma camada comum:
+
+- listar reviews abertos;
+- buscar arquivos/diff;
+- postar comentario;
+- aprovar;
+- fazer merge.
+
+GitLab e GitHub devem implementar essa camada sem duplicar a logica de IA.
+
+### 10.3 Adaptar CLI interativo e watcher
+
+O modo manual e o watcher devem aceitar projetos GitLab e GitHub na mesma configuracao, exibindo MR ou PR conforme a plataforma.
+
+### 10.4 Adicionar webhook GitHub
+
+Adicionar endpoint:
+
+```text
+POST /webhooks/github
+```
+
+Processar eventos `pull_request` nas acoes:
+
+- `opened`;
+- `reopened`;
+- `synchronize`;
+- `ready_for_review`.
+
+Validar `X-Hub-Signature-256` quando `GITHUB_WEBHOOK_SECRET` estiver configurado e deduplicar por repositorio, numero do PR e `head.sha`.
+
+### 10.5 Atualizar setup, doctor e documentacao
+
+O setup deve perguntar quais plataformas configurar. O doctor deve validar repositorios GitHub, token e webhook secret sem revelar segredos. READMEs e `.env.example` devem documentar GitLab e GitHub.
+
+**Concluido quando:** a ferramenta revisa GitLab Merge Requests e GitHub Pull Requests no modo manual, watcher e webhook, mantendo defaults seguros.
+
 ## Prioridade Recomendada
 
 1. Criar repositorio GitHub e configurar `origin`.
@@ -370,6 +422,7 @@ ngrok http 3333
 4. Adicionar pergunta local vs servidor/VPS no setup.
 5. Formalizar modo automatico por polling.
 6. Adicionar modo webhook para servidor/VPS.
-7. Atualizar READMEs com o fluxo novo.
-8. Testar em ambiente limpo.
-9. Fazer push e validar CI.
+7. Adicionar suporte GitHub Pull Requests.
+8. Atualizar READMEs com o fluxo novo.
+9. Testar em ambiente limpo.
+10. Fazer push e validar CI.
