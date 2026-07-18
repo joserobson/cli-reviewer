@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 
-export const REVIEW_STORE_PATH = '.review-dashboard.json';
+export const REVIEW_STORE_PATH = process.env.REVIEW_STORE_PATH ?? '.review-dashboard.json';
 
 export interface ReviewEvent {
   id: string;

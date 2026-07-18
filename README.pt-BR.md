@@ -178,6 +178,34 @@ cloudflared tunnel --url http://localhost:3333
 ngrok http 3333
 ```
 
+### Imagem do container
+
+Pushes em `main` e tags de versão publicam `ghcr.io/joserobson/cli-reviewer`. A imagem contém as dependências Node e o Codex CLI, executa a aplicação com o usuário sem privilégios `reviewer` e expõe o webhook na porta `3333`.
+
+Execute-a fornecendo a configuração GitLab em tempo de execução:
+
+```bash
+docker run --rm -p 3333:3333 \
+  -e GITLAB_URL=https://gitlab.exemplo.com \
+  -e GITLAB_PROJECTS=grupo/projeto:generic:Projeto \
+  -e GITLAB_TOKEN \
+  -e WEBHOOK_SECRET \
+  -e AGENT_HUB_CALLBACK_URL=http://agent-hub-api:8080/api/webhooks/reviews \
+  -e AGENT_HUB_CALLBACK_SECRET \
+  -e AUTO_REVIEW_MODE=webhook \
+  -e AUTO_REVIEW_ENABLED=true \
+  -e AUTO_REVIEW_POST_COMMENT=true \
+  -e AUTO_REVIEW_APPROVE_ON_SUCCESS=false \
+  -e AUTO_REVIEW_MERGE_ON_SUCCESS=false \
+  -v cli-reviewer-codex:/home/reviewer/.codex \
+  -v cli-reviewer-state:/var/lib/cli-reviewer \
+  ghcr.io/joserobson/cli-reviewer:latest
+```
+
+Em servidor sem interface grafica, autentique uma vez o volume dedicado do Codex com `codex login --device-auth`. `CODEX_HOME` aponta para `/home/reviewer/.codex`; nunca inclua `auth.json`, tokens GitLab ou segredos de webhook na imagem.
+
+Quando o Agent Hub encaminha o webhook, ele envia `X-AgentHub-Review-Task-Id`. O reviewer reporta `running`, `completed`, `failed` ou `skipped` para `AGENT_HUB_CALLBACK_URL/{taskId}/result`, autenticado por `AGENT_HUB_CALLBACK_SECRET`. O volume `cli-reviewer-state` preserva idempotencia, historico de revisoes e uso entre recriacoes do container. Revisoes com falha ficam liberadas para retry, enquanto processamentos com mais de 30 minutos sao considerados abandonados.
+
 ### Dashboard
 
 ```bash
@@ -185,6 +213,8 @@ npm run dashboard
 ```
 
 Abra `http://localhost:3334/dashboard` para acompanhar histórico de revisões, contagens de aprovado/revisão necessária, comentários/ações executadas e uso estimado de tokens por provider. O painel lê o estado local de `.review-dashboard.json` e `.llm-usage.json`; ambos ficam fora do Git.
+
+No deploy da VPS pelo Compose do Agent Hub, o dashboard roda como serviço separado, compartilha o estado das revisões em modo somente leitura e escuta apenas em `127.0.0.1:3334`. Acesse-o por túnel SSH; não exponha esse endpoint sem autenticação diretamente na internet.
 
 ---
 

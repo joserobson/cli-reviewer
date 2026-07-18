@@ -44,7 +44,14 @@ function jsonData(): object {
 }
 
 function send(res: ServerResponse, status: number, body: string, contentType: string): void {
-  res.writeHead(status, { 'Content-Type': contentType });
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  });
   res.end(body);
 }
 
@@ -59,6 +66,17 @@ function escapeHtml(value: string): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR');
+}
+
+function safeHttpUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? escapeHtml(url.toString())
+      : '#';
+  } catch {
+    return '#';
+  }
 }
 
 function renderDashboard(): string {
@@ -85,7 +103,7 @@ function renderDashboard(): string {
       <td>${formatDate(event.timestamp)}</td>
       <td>${event.platform}</td>
       <td>${escapeHtml(event.projectLabel)}</td>
-      <td><a href="${escapeHtml(event.requestUrl)}" target="_blank" rel="noreferrer">!${event.requestIid}</a></td>
+      <td><a href="${safeHttpUrl(event.requestUrl)}" target="_blank" rel="noopener noreferrer">!${event.requestIid}</a></td>
       <td>${escapeHtml(event.requestTitle)}</td>
       <td>${event.provider}</td>
       <td><span class="status ${event.status}">${event.status}</span></td>
@@ -168,6 +186,11 @@ function main(): void {
   const port = envInt('DASHBOARD_PORT', 3334);
 
   createServer((req, res) => {
+    if (req.method !== 'GET') {
+      send(res, 405, 'Method not allowed', 'text/plain; charset=utf-8');
+      return;
+    }
+
     if (req.url === '/health') {
       send(res, 200, JSON.stringify({ ok: true }), 'application/json');
       return;

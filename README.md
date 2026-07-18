@@ -178,6 +178,34 @@ cloudflared tunnel --url http://localhost:3333
 ngrok http 3333
 ```
 
+### Container image
+
+Pushes to `main` and version tags publish `ghcr.io/joserobson/cli-reviewer`. The image contains the Node dependencies and the Codex CLI, runs the application as the unprivileged `reviewer` user, and exposes the webhook on port `3333`.
+
+Run it with GitLab configuration supplied at runtime:
+
+```bash
+docker run --rm -p 3333:3333 \
+  -e GITLAB_URL=https://gitlab.example.com \
+  -e GITLAB_PROJECTS=group/project:generic:Project \
+  -e GITLAB_TOKEN \
+  -e WEBHOOK_SECRET \
+  -e AGENT_HUB_CALLBACK_URL=http://agent-hub-api:8080/api/webhooks/reviews \
+  -e AGENT_HUB_CALLBACK_SECRET \
+  -e AUTO_REVIEW_MODE=webhook \
+  -e AUTO_REVIEW_ENABLED=true \
+  -e AUTO_REVIEW_POST_COMMENT=true \
+  -e AUTO_REVIEW_APPROVE_ON_SUCCESS=false \
+  -e AUTO_REVIEW_MERGE_ON_SUCCESS=false \
+  -v cli-reviewer-codex:/home/reviewer/.codex \
+  -v cli-reviewer-state:/var/lib/cli-reviewer \
+  ghcr.io/joserobson/cli-reviewer:latest
+```
+
+For a headless server, authenticate the dedicated Codex volume once with `codex login --device-auth`. `CODEX_HOME` points to `/home/reviewer/.codex`; never bake `auth.json`, GitLab tokens, or webhook secrets into the image.
+
+When Agent Hub forwards the webhook, it sends `X-AgentHub-Review-Task-Id`. The reviewer reports `running`, `completed`, `failed`, or `skipped` to `AGENT_HUB_CALLBACK_URL/{taskId}/result`, authenticated by `AGENT_HUB_CALLBACK_SECRET`. The `cli-reviewer-state` volume preserves idempotency, review history, and usage data across container recreation. Failed reviews are released for retry, while processing entries older than 30 minutes are considered stale.
+
 ### Dashboard
 
 ```bash
@@ -185,6 +213,8 @@ npm run dashboard
 ```
 
 Open `http://localhost:3334/dashboard` to inspect review history, approval/review-needed counts, comments/actions taken, and estimated token usage per provider. The dashboard reads local state from `.review-dashboard.json` and `.llm-usage.json`; both files are gitignored.
+
+In the Agent Hub VPS Compose deployment, the dashboard runs as a separate service, shares the review state read-only, and binds only to `127.0.0.1:3334`. Access it through an SSH tunnel; do not expose this unauthenticated endpoint directly to the internet.
 
 ---
 

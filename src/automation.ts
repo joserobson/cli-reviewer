@@ -17,6 +17,16 @@ export interface AutoReviewConfig {
   mergeOnSuccess: boolean;
 }
 
+export interface AutoReviewResult {
+  status: 'completed' | 'skipped';
+  provider?: 'codex' | 'gemini' | 'code';
+  summary: string;
+  recommendedApproval?: boolean;
+  suggestionsCount: number;
+  risksCount: number;
+  commentPosted: boolean;
+}
+
 export function getAutoReviewConfig(): AutoReviewConfig {
   const mode = process.env.AUTO_REVIEW_MODE?.trim().toLowerCase();
 
@@ -65,7 +75,11 @@ export function notify(title: string, message: string, enabled = getAutoReviewCo
   }
 }
 
-export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, config = getAutoReviewConfig()): Promise<void> {
+export async function analyzeAndApply(
+  project: ProjectConfig,
+  mr: MergeRequest,
+  config = getAutoReviewConfig(),
+): Promise<AutoReviewResult> {
   const skipReason = shouldSkipMergeRequest(mr, config);
   const label = requestLabel(project);
   if (skipReason) {
@@ -81,7 +95,13 @@ export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, 
       merged: false,
       error: skipReason,
     });
-    return;
+    return {
+      status: 'skipped',
+      summary: skipReason,
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+    };
   }
 
   const { type: projectType } = project;
@@ -103,7 +123,13 @@ export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, 
       merged: false,
       error: 'sem alteracoes de codigo',
     });
-    return;
+    return {
+      status: 'skipped',
+      summary: 'sem alteracoes de codigo',
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+    };
   }
 
   const diffText = changes.map(c => c.diff).join('\n');
@@ -159,6 +185,16 @@ export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, 
       `"${mr.title}" by ${mr.author.name} (via ${provider})`,
       config.notifyDesktop,
     );
+
+    return {
+      status: 'completed',
+      provider,
+      summary: verdict,
+      recommendedApproval: analysis.aprovacao_recomendada,
+      suggestionsCount: analysis.sugestoes.length,
+      risksCount: analysis.riscos.length,
+      commentPosted,
+    };
   } catch (err) {
     recordReview(project, mr, {
       provider,
