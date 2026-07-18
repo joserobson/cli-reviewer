@@ -5,21 +5,22 @@ ENV CLI_REVIEWER_STATE_DIR=/var/lib/cli-reviewer
 ENV WEBHOOK_STATE_PATH=/var/lib/cli-reviewer/webhook-state.json
 ENV REVIEW_STORE_PATH=/var/lib/cli-reviewer/review-dashboard.json
 ENV LLM_USAGE_STORE_PATH=/var/lib/cli-reviewer/llm-usage.json
+ENV CLAUDE_CONFIG_DIR=/var/lib/cli-reviewer/claude
+ENV PATH=/home/reviewer/.local/bin:${PATH}
+ENV DISABLE_AUTOUPDATER=1
 
-# Claude Code: skip interactive permission prompts in non-interactive environments
-ENV CLAUDE_SKIP_PERMISSIONS=true
 # Gemini CLI: signal non-interactive / headless mode
 ENV GEMINI_NON_INTERACTIVE=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gosu \
+    && apt-get install -y --no-install-recommends bash ca-certificates curl gosu \
     && npm install --global @openai/codex @google/gemini-cli \
-    && curl -fsSL https://claude.ai/install.sh | bash \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin reviewer \
     && mkdir -p /home/reviewer/.codex \
-    && mkdir -p /var/lib/cli-reviewer \
+    && mkdir -p /var/lib/cli-reviewer/claude \
     && chown -R reviewer:reviewer /home/reviewer \
     && chown -R reviewer:reviewer /var/lib/cli-reviewer \
+    && gosu reviewer bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
