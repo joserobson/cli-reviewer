@@ -4,6 +4,7 @@ import { AI_PROVIDERS, analyzeMergeRequest } from './ai';
 import { approveRequest, getRequestChanges, mergeRequest, postRequestComment, requestLabel } from './scm';
 import { selectProvider, recordUsage, estimateTokens, getUsageSummary } from './usage-tracker';
 import { envFlag } from './env-utils';
+import { recordReviewEvent } from './review-store';
 import type { MergeRequest, ProjectConfig } from './types';
 
 export interface AutoReviewConfig {
@@ -14,6 +15,16 @@ export interface AutoReviewConfig {
   skipDraft: boolean;
   approveOnSuccess: boolean;
   mergeOnSuccess: boolean;
+}
+
+export interface AutoReviewResult {
+  status: 'completed' | 'skipped';
+  provider?: 'codex' | 'gemini' | 'code';
+  summary: string;
+  recommendedApproval?: boolean;
+  suggestionsCount: number;
+  risksCount: number;
+  commentPosted: boolean;
 }
 
 export function getAutoReviewConfig(): AutoReviewConfig {
@@ -64,12 +75,33 @@ export function notify(title: string, message: string, enabled = getAutoReviewCo
   }
 }
 
-export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, config = getAutoReviewConfig()): Promise<void> {
+export async function analyzeAndApply(
+  project: ProjectConfig,
+  mr: MergeRequest,
+  config = getAutoReviewConfig(),
+): Promise<AutoReviewResult> {
   const skipReason = shouldSkipMergeRequest(mr, config);
   const label = requestLabel(project);
   if (skipReason) {
     console.log(`   - ${label} !${mr.iid} ignorado (${skipReason})`);
-    return;
+    recordReview(project, mr, {
+      provider: 'codex',
+      estimatedTokens: 0,
+      status: 'skipped',
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+      approved: false,
+      merged: false,
+      error: skipReason,
+    });
+    return {
+      status: 'skipped',
+      summary: skipReason,
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+    };
   }
 
   const { type: projectType } = project;
@@ -80,7 +112,24 @@ export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, 
 
   if (changes.length === 0) {
     console.log(`   - ${label} !${mr.iid} sem alteracoes de codigo; pulando`);
-    return;
+    recordReview(project, mr, {
+      provider: 'codex',
+      estimatedTokens: 0,
+      status: 'skipped',
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+      approved: false,
+      merged: false,
+      error: 'sem alteracoes de codigo',
+    });
+    return {
+      status: 'skipped',
+      summary: 'sem alteracoes de codigo',
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+    };
   }
 
   const diffText = changes.map(c => c.diff).join('\n');
@@ -89,34 +138,95 @@ export async function analyzeAndApply(project: ProjectConfig, mr: MergeRequest, 
 
   console.log(`   -> ~${promptTokens.toLocaleString()} tokens estimados; enviando para ${provider.toUpperCase()}...`);
 
-  const analysis = await analyzeMergeRequest(provider, projectType, mr, changes);
-  recordUsage(provider, promptTokens);
+  try {
+    const analysis = await analyzeMergeRequest(provider, projectType, mr, changes);
+    recordUsage(provider, promptTokens);
 
-  if (config.postComment) {
-    console.log(`   -> Postando comentario no ${project.platform}...`);
-    await postRequestComment(project, mr.iid, analysis.comentario_geral);
-  } else {
-    console.log('   - Comentario automatico desabilitado por AUTO_REVIEW_POST_COMMENT=false');
+    let commentPosted = false;
+    let approved = false;
+    let merged = false;
+
+    if (config.postComment) {
+      console.log(`   -> Postando comentario no ${project.platform}...`);
+      await postRequestComment(project, mr.iid, analysis.comentario_geral);
+      commentPosted = true;
+    } else {
+      console.log('   - Comentario automatico desabilitado por AUTO_REVIEW_POST_COMMENT=false');
+    }
+
+    if (analysis.aprovacao_recomendada && config.approveOnSuccess) {
+      console.log(`   -> Aprovando ${label} no ${project.platform}...`);
+      await approveRequest(project, mr.iid);
+      approved = true;
+    }
+
+    if (analysis.aprovacao_recomendada && config.mergeOnSuccess) {
+      console.log(`   -> Disparando merge no ${project.platform}...`);
+      await mergeRequest(project, mr.iid);
+      merged = true;
+    }
+
+    recordReview(project, mr, {
+      provider,
+      estimatedTokens: promptTokens,
+      status: analysis.aprovacao_recomendada ? 'approved' : 'needs-review',
+      suggestionsCount: analysis.sugestoes.length,
+      risksCount: analysis.riscos.length,
+      commentPosted,
+      approved,
+      merged,
+    });
+
+    const verdict = analysis.aprovacao_recomendada ? 'Aprovado' : 'Revisao necessaria';
+    console.log(`   OK ${verdict} | ${analysis.sugestoes.length} sugestao(oes) | ${label} !${mr.iid}`);
+
+    notify(
+      `${label} !${mr.iid} - ${verdict}`,
+      `"${mr.title}" by ${mr.author.name} (via ${provider})`,
+      config.notifyDesktop,
+    );
+
+    return {
+      status: 'completed',
+      provider,
+      summary: verdict,
+      recommendedApproval: analysis.aprovacao_recomendada,
+      suggestionsCount: analysis.sugestoes.length,
+      risksCount: analysis.riscos.length,
+      commentPosted,
+    };
+  } catch (err) {
+    recordReview(project, mr, {
+      provider,
+      estimatedTokens: promptTokens,
+      status: 'failed',
+      suggestionsCount: 0,
+      risksCount: 0,
+      commentPosted: false,
+      approved: false,
+      merged: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
   }
+}
 
-  if (analysis.aprovacao_recomendada && config.approveOnSuccess) {
-    console.log(`   -> Aprovando ${label} no ${project.platform}...`);
-    await approveRequest(project, mr.iid);
-  }
-
-  if (analysis.aprovacao_recomendada && config.mergeOnSuccess) {
-    console.log(`   -> Disparando merge no ${project.platform}...`);
-    await mergeRequest(project, mr.iid);
-  }
-
-  const verdict = analysis.aprovacao_recomendada ? 'Aprovado' : 'Revisao necessaria';
-  console.log(`   OK ${verdict} | ${analysis.sugestoes.length} sugestao(oes) | ${label} !${mr.iid}`);
-
-  notify(
-    `${label} !${mr.iid} - ${verdict}`,
-    `"${mr.title}" by ${mr.author.name} (via ${provider})`,
-    config.notifyDesktop,
-  );
+function recordReview(
+  project: ProjectConfig,
+  mr: MergeRequest,
+  data: Omit<Parameters<typeof recordReviewEvent>[0], 'platform' | 'projectId' | 'projectLabel' | 'projectType' | 'requestIid' | 'requestTitle' | 'requestAuthor' | 'requestUrl'>,
+): void {
+  recordReviewEvent({
+    ...data,
+    platform: project.platform,
+    projectId: project.id,
+    projectLabel: project.label,
+    projectType: project.type,
+    requestIid: mr.iid,
+    requestTitle: mr.title,
+    requestAuthor: mr.author.username,
+    requestUrl: mr.web_url,
+  });
 }
 
 export function printUsage(): void {

@@ -20,6 +20,7 @@ npm-debug.log*
 # Watcher state (local, não deve ser commitado)
 .watcher-state.json
 .llm-usage.json
+.review-dashboard.json
 
 # OS
 .DS_Store

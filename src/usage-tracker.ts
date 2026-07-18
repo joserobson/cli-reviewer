@@ -21,7 +21,7 @@ export interface UsageSummary {
   code: ProviderUsage & { limit: number; enabled: boolean };
 }
 
-const STORE_PATH = '.llm-usage.json';
+const STORE_PATH = process.env.LLM_USAGE_STORE_PATH ?? '.llm-usage.json';
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);

@@ -7,7 +7,9 @@ import prompts from 'prompts';
 import { analyzeMergeRequest, getEnabledProviders, getProviderConfig, type AIProvider } from './ai';
 import { displayBanner, displayAnalysis, createSpinner, createParallelProgressDisplay } from './display';
 import { loadProjects } from './projects';
+import { recordReviewEvent } from './review-store';
 import { approveRequest, getRequestChanges, listOpenRequests, mergeRequest, postRequestComment, requestLabel } from './scm';
+import { estimateTokens, recordUsage } from './usage-tracker';
 import type { MergeRequest, MRAnalysisResult } from './types';
 
 function relativeDate(isoDate: string): string {
@@ -134,7 +136,7 @@ async function main(): Promise<void> {
       selectedMRs.map(mr => `#${mr.iid}  ${mr.title.length > 36 ? mr.title.slice(0, 33) + '.' : mr.title}`),
     );
 
-    async function fetchAndAnalyze(mr: MergeRequest, index: number): Promise<import('./types').ClaudeAnalysis> {
+    async function fetchAndAnalyze(mr: MergeRequest, index: number): Promise<{ analysis: import('./types').ClaudeAnalysis; estimatedTokens: number }> {
       progress.update(index, 'running', 'buscando diff...');
       const mrDetail = await getRequestChanges(selectedProject, mr.iid);
 
@@ -142,10 +144,14 @@ async function main(): Promise<void> {
         throw new Error(`${reviewLabel} sem alteracoes de codigo`);
       }
 
+      const diffText = mrDetail.changes.map(c => c.diff).join('\n');
+      const estimatedTokens = estimateTokens(diffText) + 2_000;
+
       progress.update(index, 'running', `analisando com ${providerName}...`);
       const analysis = await analyzeMergeRequest(provider, projectType, mr, mrDetail.changes);
+      recordUsage(provider, estimatedTokens);
       progress.update(index, 'done', 'concluido!');
-      return analysis;
+      return { analysis, estimatedTokens };
     }
 
     const settled = await Promise.allSettled(
@@ -155,12 +161,33 @@ async function main(): Promise<void> {
     progress.stop();
     console.log();
 
+    const tokenByIid = new Map<number, number>();
     const results: MRAnalysisResult[] = settled.map((s, i) => {
       const mr = selectedMRs[i];
       if (s.status === 'fulfilled') {
-        return { status: 'fulfilled', mr, analysis: s.value };
+        tokenByIid.set(mr.iid, s.value.estimatedTokens);
+        return { status: 'fulfilled', mr, analysis: s.value.analysis };
       }
       const reason = s.reason;
+      recordReviewEvent({
+        platform: selectedProject.platform,
+        projectId: selectedProject.id,
+        projectLabel,
+        projectType,
+        requestIid: mr.iid,
+        requestTitle: mr.title,
+        requestAuthor: mr.author.username,
+        requestUrl: mr.web_url,
+        provider,
+        estimatedTokens: 0,
+        status: 'failed',
+        suggestionsCount: 0,
+        risksCount: 0,
+        commentPosted: false,
+        approved: false,
+        merged: false,
+        error: reason instanceof Error ? reason.message : String(reason),
+      });
       return { status: 'rejected', mr, error: reason instanceof Error ? reason.message : String(reason) };
     });
 
@@ -201,11 +228,15 @@ async function main(): Promise<void> {
       const shouldApprove = action === 'approve' || action === 'approve-merge' || action === 'both' || action === 'both-merge';
       const shouldComment = action === 'comment' || action === 'both' || action === 'both-merge';
       const shouldMerge = action === 'approve-merge' || action === 'both-merge';
+      let approved = false;
+      let commentPosted = false;
+      let merged = false;
 
       if (shouldApprove) {
         const spin = createSpinner(`Aprovando ${reviewLabel} no ${selectedProject.platform}...`);
         try {
           await approveRequest(selectedProject, mr.iid);
+          approved = true;
           spin.stop(`  ${chalk.green(`${reviewLabel} #${mr.iid} aprovado com sucesso!`)}`);
         } catch (err) {
           spin.stop();
@@ -218,6 +249,7 @@ async function main(): Promise<void> {
         try {
           const commentBody = `@${mr.author.username}\n\n${result.analysis.comentario_geral}`;
           await postRequestComment(selectedProject, mr.iid, commentBody);
+          commentPosted = true;
           spin.stop(`  ${chalk.yellow(`Analise postada como comentario no ${reviewLabel} #${mr.iid}`)}`);
         } catch (err) {
           spin.stop();
@@ -229,6 +261,7 @@ async function main(): Promise<void> {
         const spin = createSpinner('Fazendo merge...');
         try {
           await mergeRequest(selectedProject, mr.iid);
+          merged = true;
           spin.stop(`  ${chalk.bold.green(`${reviewLabel} #${mr.iid} merge iniciado!`)}`);
         } catch (err) {
           spin.stop();
@@ -239,6 +272,25 @@ async function main(): Promise<void> {
       if (action === 'skip') {
         console.log(chalk.dim('  Nenhuma acao executada.'));
       }
+
+      recordReviewEvent({
+        platform: selectedProject.platform,
+        projectId: selectedProject.id,
+        projectLabel,
+        projectType,
+        requestIid: mr.iid,
+        requestTitle: mr.title,
+        requestAuthor: mr.author.username,
+        requestUrl: mr.web_url,
+        provider,
+        estimatedTokens: tokenByIid.get(mr.iid) ?? 0,
+        status: result.analysis.aprovacao_recomendada ? 'approved' : 'needs-review',
+        suggestionsCount: result.analysis.sugestoes.length,
+        risksCount: result.analysis.riscos.length,
+        commentPosted,
+        approved,
+        merged,
+      });
 
       console.log();
     }

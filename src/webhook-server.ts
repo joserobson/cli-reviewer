@@ -1,21 +1,18 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { config } from 'dotenv';
 
+import { sendAgentHubReviewResult, type AgentHubReviewResult } from './agent-hub-callback';
 import { analyzeAndApply, getAutoReviewConfig, notify } from './automation';
 import { envInt } from './env-utils';
 import { loadProjects } from './projects';
 import { getRequest, requestLabel } from './scm';
 import type { MergeRequest, ProjectConfig } from './types';
+import { WebhookEventStore } from './webhook-state';
 
 config();
 
-const WEBHOOK_STATE_PATH = '.webhook-state.json';
-
-interface WebhookState {
-  processedEvents: string[];
-}
+const webhookEvents = new WebhookEventStore(process.env.WEBHOOK_STATE_PATH);
 
 interface GitLabMergeRequestPayload {
   event_type?: string;
@@ -59,19 +56,6 @@ interface GitHubPullRequestPayload {
   };
 }
 
-function loadWebhookState(): WebhookState {
-  if (!existsSync(WEBHOOK_STATE_PATH)) return { processedEvents: [] };
-  try {
-    return JSON.parse(readFileSync(WEBHOOK_STATE_PATH, 'utf8')) as WebhookState;
-  } catch {
-    return { processedEvents: [] };
-  }
-}
-
-function saveWebhookState(state: WebhookState): void {
-  writeFileSync(WEBHOOK_STATE_PATH, JSON.stringify(state, null, 2), 'utf8');
-}
-
 function eventKey(projectId: string, iid: number, payload: GitLabMergeRequestPayload): string {
   const attrs = payload.object_attributes;
   const ref = attrs?.last_commit?.id ?? attrs?.updated_at ?? 'unknown';
@@ -100,6 +84,21 @@ function readBody(req: IncomingMessage): Promise<string> {
 function send(res: ServerResponse, status: number, body: object): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+function agentHubTaskId(req: IncomingMessage): string | null {
+  const value = req.headers['x-agenthub-review-task-id'];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+async function reportAgentHub(taskId: string | null, result: AgentHubReviewResult): Promise<void> {
+  if (!taskId) return;
+
+  try {
+    await sendAgentHubReviewResult(taskId, result);
+  } catch (err) {
+    console.error(`[callback] Falha ao atualizar task ${taskId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 function verifyGitHubSignature(req: IncomingMessage, raw: string): boolean {
@@ -175,6 +174,7 @@ function prFromPayload(payload: GitHubPullRequestPayload): MergeRequest | null {
 async function handleGitLabWebhook(req: IncomingMessage, res: ServerResponse, projects: ProjectConfig[]): Promise<void> {
   const config = getAutoReviewConfig();
   const expectedSecret = process.env.WEBHOOK_SECRET;
+  const taskId = agentHubTaskId(req);
 
   if (!expectedSecret) {
     send(res, 500, { error: 'WEBHOOK_SECRET nao configurado' });
@@ -191,12 +191,15 @@ async function handleGitLabWebhook(req: IncomingMessage, res: ServerResponse, pr
   const eventType = payload.event_type ?? payload.object_kind;
   if (eventType !== 'merge_request') {
     send(res, 202, { skipped: 'evento ignorado' });
+    await reportAgentHub(taskId, { status: 'skipped', summary: 'evento ignorado' });
     return;
   }
 
   const action = payload.object_attributes?.action;
   if (!['open', 'reopen', 'update'].includes(action ?? '')) {
-    send(res, 202, { skipped: `acao ignorada: ${action ?? 'desconhecida'}` });
+    const summary = `acao ignorada: ${action ?? 'desconhecida'}`;
+    send(res, 202, { skipped: summary });
+    await reportAgentHub(taskId, { status: 'skipped', summary });
     return;
   }
 
@@ -204,21 +207,22 @@ async function handleGitLabWebhook(req: IncomingMessage, res: ServerResponse, pr
   const fallbackMr = project ? mrFromPayload(project.id, payload) : null;
   if (!project || !fallbackMr) {
     send(res, 400, { error: 'projeto ou MR nao configurado' });
+    await reportAgentHub(taskId, { status: 'failed', errorMessage: 'projeto ou MR nao configurado' });
     return;
   }
 
   const key = eventKey(project.id, fallbackMr.iid, payload);
-  const state = loadWebhookState();
-  if (state.processedEvents.includes(key)) {
-    send(res, 202, { skipped: 'evento ja processado' });
+  if (!config.enabled) {
+    send(res, 202, { skipped: 'AUTO_REVIEW_ENABLED=false', key });
+    await reportAgentHub(taskId, { status: 'skipped', summary: 'AUTO_REVIEW_ENABLED=false' });
     return;
   }
 
-  state.processedEvents = [...state.processedEvents.slice(-499), key];
-  saveWebhookState(state);
-
-  if (!config.enabled) {
-    send(res, 202, { skipped: 'AUTO_REVIEW_ENABLED=false', key });
+  const eventState = webhookEvents.begin(key);
+  if (eventState !== 'started') {
+    const summary = eventState === 'processing' ? 'evento em processamento' : 'evento ja processado';
+    send(res, 202, { skipped: summary });
+    await reportAgentHub(taskId, { status: 'skipped', summary });
     return;
   }
 
@@ -227,9 +231,18 @@ async function handleGitLabWebhook(req: IncomingMessage, res: ServerResponse, pr
   const mr = await getRequest(project, fallbackMr.iid).catch(() => fallbackMr);
   console.log(`\n[webhook] Analisando MR !${mr.iid}: "${mr.title}" [${project.label}]`);
   notify(`Webhook MR !${mr.iid}`, `"${mr.title}" - iniciando analise`, config.notifyDesktop);
-  await analyzeAndApply(project, mr, config).catch(err => {
+  await reportAgentHub(taskId, { status: 'running' });
+
+  try {
+    const result = await analyzeAndApply(project, mr, config);
+    webhookEvents.complete(key);
+    await reportAgentHub(taskId, result);
+  } catch (err) {
+    webhookEvents.fail(key);
+    const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(`[webhook] Falha ao analisar MR !${mr.iid}: ${err instanceof Error ? err.message : String(err)}`);
-  });
+    await reportAgentHub(taskId, { status: 'failed', errorMessage });
+  }
 }
 
 async function handleGitHubWebhook(req: IncomingMessage, res: ServerResponse, projects: ProjectConfig[]): Promise<void> {
@@ -260,17 +273,14 @@ async function handleGitHubWebhook(req: IncomingMessage, res: ServerResponse, pr
   }
 
   const key = githubEventKey(project.id, payload);
-  const state = loadWebhookState();
-  if (state.processedEvents.includes(key)) {
-    send(res, 202, { skipped: 'evento ja processado' });
+  if (!config.enabled) {
+    send(res, 202, { skipped: 'AUTO_REVIEW_ENABLED=false', key });
     return;
   }
 
-  state.processedEvents = [...state.processedEvents.slice(-499), key];
-  saveWebhookState(state);
-
-  if (!config.enabled) {
-    send(res, 202, { skipped: 'AUTO_REVIEW_ENABLED=false', key });
+  const eventState = webhookEvents.begin(key);
+  if (eventState !== 'started') {
+    send(res, 202, { skipped: eventState === 'processing' ? 'evento em processamento' : 'evento ja processado' });
     return;
   }
 
@@ -280,9 +290,13 @@ async function handleGitHubWebhook(req: IncomingMessage, res: ServerResponse, pr
   const pr = await getRequest(project, fallbackPr.iid).catch(() => fallbackPr);
   console.log(`\n[webhook] Analisando ${label} !${pr.iid}: "${pr.title}" [${project.label}]`);
   notify(`Webhook ${label} !${pr.iid}`, `"${pr.title}" - iniciando analise`, config.notifyDesktop);
-  await analyzeAndApply(project, pr, config).catch(err => {
+  try {
+    await analyzeAndApply(project, pr, config);
+    webhookEvents.complete(key);
+  } catch (err) {
+    webhookEvents.fail(key);
     console.error(`[webhook] Falha ao analisar ${label} !${pr.iid}: ${err instanceof Error ? err.message : String(err)}`);
-  });
+  }
 }
 
 async function main(): Promise<void> {

@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+*.log
+.watcher-state.json
+.webhook-state.json
+.llm-usage.json
+.review-dashboard.json
+.claude
