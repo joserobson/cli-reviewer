@@ -6,9 +6,15 @@ ENV WEBHOOK_STATE_PATH=/var/lib/cli-reviewer/webhook-state.json
 ENV REVIEW_STORE_PATH=/var/lib/cli-reviewer/review-dashboard.json
 ENV LLM_USAGE_STORE_PATH=/var/lib/cli-reviewer/llm-usage.json
 
+# Claude Code: skip interactive permission prompts in non-interactive environments
+ENV CLAUDE_SKIP_PERMISSIONS=true
+# Gemini CLI: signal non-interactive / headless mode
+ENV GEMINI_NON_INTERACTIVE=1
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates gosu \
-    && npm install --global @openai/codex \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu \
+    && npm install --global @openai/codex @google/gemini-cli \
+    && curl -fsSL https://claude.ai/install.sh | bash \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin reviewer \
     && mkdir -p /home/reviewer/.codex \
     && mkdir -p /var/lib/cli-reviewer \
