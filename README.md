@@ -216,6 +216,12 @@ Open `http://localhost:3334/dashboard` to inspect review history, approval/revie
 
 In the Agent Hub VPS Compose deployment, the dashboard runs as a separate service, shares the review state read-only, and binds only to `127.0.0.1:3334`. Access it through an SSH tunnel; do not expose this unauthenticated endpoint directly to the internet.
 
+Start with the isolated
+[9router VPS pilot](docs/deployment/testar-9router-isolado-vps.md), which uses a
+dedicated Compose and does not modify Agent Hub, Reviewer, OpenClaw, or Nginx.
+After the pilot gate passes, follow the
+[shared HTTPS gateway guide](docs/deployment/configurar-9router-vps.md).
+
 ---
 
 ## Smart LLM Selection
@@ -303,6 +309,26 @@ See `CONTRIBUTING.md` for the contribution workflow and `SECURITY.md` for secret
 
 ## Troubleshooting
 
+### Quick Diagnostics
+
+**Run the diagnostic script to check your configuration:**
+
+```bash
+npm run diagnostic
+```
+
+This will verify:
+- Environment variables
+- Auto-review configuration
+- Configured projects
+- State files
+- CLI availability
+- GitLab/GitHub connectivity
+
+**For webhook server issues** (container running but not generating reviews), see the detailed [TROUBLESHOOTING.md](TROUBLESHOOTING.md) guide.
+
+### Common Issues
+
 | Problem | Check |
 |---|---|
 | Missing GitLab configuration | Copy `.env.example` to `.env` and set `GITLAB_URL`, `GITLAB_TOKEN`, and `GITLAB_PROJECTS` |
@@ -315,6 +341,8 @@ See `CONTRIBUTING.md` for the contribution workflow and `SECURITY.md` for secret
 | GitHub repository has no permission | Confirm the token can read PRs and write Pull Request reviews/comments |
 | Watcher does not post comments | Confirm token scope `api`, project IDs, and GitLab permissions |
 | Webhook returns 401 | Confirm GitLab's secret token matches `WEBHOOK_SECRET` or GitHub's signature uses `GITHUB_WEBHOOK_SECRET` |
+| Webhook not receiving events | Verify webhook URL is correct in GitLab/GitHub settings and network is reachable |
+| Container running but no reviews | Check `AUTO_REVIEW_ENABLED=true` in .env; run `npm run diagnostic`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 
 ---
 

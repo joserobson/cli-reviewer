@@ -9,11 +9,14 @@ ENV CLAUDE_CONFIG_DIR=/var/lib/cli-reviewer/claude
 ENV PATH=/home/reviewer/.local/bin:${PATH}
 ENV DISABLE_AUTOUPDATER=1
 
+# Timezone padrão (pode ser sobrescrito via docker-compose ou runtime)
+ENV TZ=America/Sao_Paulo
+
 # Gemini CLI: signal non-interactive / headless mode
 ENV GEMINI_NON_INTERACTIVE=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ca-certificates curl gosu \
+    && apt-get install -y --no-install-recommends bash ca-certificates curl gosu tzdata \
     && npm install --global @openai/codex @google/gemini-cli \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin reviewer \
     && mkdir -p /home/reviewer/.codex \
