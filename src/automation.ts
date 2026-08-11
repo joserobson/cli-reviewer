@@ -107,8 +107,17 @@ export async function analyzeAndApply(
   const { type: projectType } = project;
 
   console.log(`   -> Buscando diff do ${label} !${mr.iid}...`);
-  const detail = await getRequestChanges(project, mr.iid);
+  let detail;
+  try {
+    detail = await getRequestChanges(project, mr.iid);
+    console.log(`   ✓ Diff obtido com sucesso`);
+  } catch (err) {
+    console.error(`   ❌ Erro ao buscar diff: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
+
   const changes = detail.changes ?? [];
+  console.log(`   → ${changes.length} arquivo(s) alterado(s)`);
 
   if (changes.length === 0) {
     console.log(`   - ${label} !${mr.iid} sem alteracoes de codigo; pulando`);
@@ -139,7 +148,10 @@ export async function analyzeAndApply(
   console.log(`   -> ~${promptTokens.toLocaleString()} tokens estimados; enviando para ${provider.toUpperCase()}...`);
 
   try {
+    console.log(`   -> Executando análise com ${provider} (tipo projeto: ${projectType})...`);
     const analysis = await analyzeMergeRequest(provider, projectType, mr, changes);
+    console.log(`   ✓ Análise concluída: ${analysis.aprovacao_recomendada ? 'APROVADO' : 'REQUER REVISÃO'}`);
+    console.log(`      Riscos: ${analysis.riscos.length} | Sugestões: ${analysis.sugestoes.length}`);
     recordUsage(provider, promptTokens);
 
     let commentPosted = false;
@@ -148,22 +160,40 @@ export async function analyzeAndApply(
 
     if (config.postComment) {
       console.log(`   -> Postando comentario no ${project.platform}...`);
-      await postRequestComment(project, mr.iid, analysis.comentario_geral);
-      commentPosted = true;
+      try {
+        await postRequestComment(project, mr.iid, analysis.comentario_geral);
+        console.log(`   ✓ Comentário postado com sucesso`);
+        commentPosted = true;
+      } catch (err) {
+        console.error(`   ❌ Erro ao postar comentário: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
     } else {
       console.log('   - Comentario automatico desabilitado por AUTO_REVIEW_POST_COMMENT=false');
     }
 
     if (analysis.aprovacao_recomendada && config.approveOnSuccess) {
       console.log(`   -> Aprovando ${label} no ${project.platform}...`);
-      await approveRequest(project, mr.iid);
-      approved = true;
+      try {
+        await approveRequest(project, mr.iid);
+        console.log(`   ✓ MR aprovado com sucesso`);
+        approved = true;
+      } catch (err) {
+        console.error(`   ❌ Erro ao aprovar: ${err instanceof Error ? err.message : String(err)}`);
+        // Não falhar a análise completa se só a aprovação falhar
+      }
     }
 
     if (analysis.aprovacao_recomendada && config.mergeOnSuccess) {
       console.log(`   -> Disparando merge no ${project.platform}...`);
-      await mergeRequest(project, mr.iid);
-      merged = true;
+      try {
+        await mergeRequest(project, mr.iid);
+        console.log(`   ✓ Merge executado com sucesso`);
+        merged = true;
+      } catch (err) {
+        console.error(`   ❌ Erro ao fazer merge: ${err instanceof Error ? err.message : String(err)}`);
+        // Não falhar a análise completa se só o merge falhar
+      }
     }
 
     recordReview(project, mr, {
@@ -196,6 +226,11 @@ export async function analyzeAndApply(
       commentPosted,
     };
   } catch (err) {
+    console.error(`   ❌ ERRO DURANTE ANÁLISE: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof Error && err.stack) {
+      console.error(`      Stack: ${err.stack.split('\n').slice(0, 3).join('\n')}`);
+    }
+
     recordReview(project, mr, {
       provider,
       estimatedTokens: promptTokens,

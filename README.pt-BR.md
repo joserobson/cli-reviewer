@@ -216,6 +216,12 @@ Abra `http://localhost:3334/dashboard` para acompanhar histórico de revisões, 
 
 No deploy da VPS pelo Compose do Agent Hub, o dashboard roda como serviço separado, compartilha o estado das revisões em modo somente leitura e escuta apenas em `127.0.0.1:3334`. Acesse-o por túnel SSH; não exponha esse endpoint sem autenticação diretamente na internet.
 
+Comece pelo
+[piloto isolado do 9router na VPS](docs/deployment/testar-9router-isolado-vps.md),
+com Compose próprio e sem alterar Agent Hub, Reviewer, OpenClaw ou Nginx.
+Depois de aprovar o gate do piloto, siga o
+[guia do gateway compartilhado em HTTPS](docs/deployment/configurar-9router-vps.md).
+
 ---
 
 ## Seleção Inteligente de LLM
@@ -303,6 +309,26 @@ Veja `CONTRIBUTING.md` para o fluxo de contribuição e `SECURITY.md` para trata
 
 ## Solução de problemas
 
+### Diagnóstico Rápido
+
+**Execute o script de diagnóstico para verificar sua configuração:**
+
+```bash
+npm run diagnostic
+```
+
+Isso vai verificar:
+- Variáveis de ambiente
+- Configuração de auto-review
+- Projetos configurados
+- Arquivos de estado
+- Disponibilidade das CLIs
+- Conectividade GitLab/GitHub
+
+**Para problemas com webhook server** (container rodando mas não gerando reviews), veja o guia detalhado [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+### Problemas Comuns
+
 | Problema | Verifique |
 |---|---|
 | Configuração do GitLab ausente | Copie `.env.example` para `.env` e defina `GITLAB_URL`, `GITLAB_TOKEN` e `GITLAB_PROJECTS` |
@@ -315,6 +341,8 @@ Veja `CONTRIBUTING.md` para o fluxo de contribuição e `SECURITY.md` para trata
 | Repositório GitHub sem permissão | Confirme que o token pode ler PRs e escrever reviews/comentários |
 | Watcher não posta comentários | Confirme escopo `api` do token, IDs de projeto e permissões no GitLab |
 | Webhook retorna 401 | Confirme que o token do GitLab é igual ao `WEBHOOK_SECRET` ou que a assinatura GitHub usa `GITHUB_WEBHOOK_SECRET` |
+| Webhook não recebe eventos | Verifique se a URL do webhook está correta nas configurações GitLab/GitHub e se a rede está acessível |
+| Container rodando mas sem reviews | Verifique `AUTO_REVIEW_ENABLED=true` no .env; rode `npm run diagnostic`; veja [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 
 ---
 

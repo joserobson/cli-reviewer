@@ -1,6 +1,7 @@
 import { createServer, type ServerResponse } from 'http';
 import { config } from 'dotenv';
 
+import { formatDateTime } from './datetime-utils';
 import { envInt } from './env-utils';
 import { loadReviewStore, type ReviewEvent } from './review-store';
 import { getUsageSummary } from './usage-tracker';
@@ -65,7 +66,7 @@ function escapeHtml(value: string): string {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('pt-BR');
+  return formatDateTime(iso);
 }
 
 function safeHttpUrl(value: string): string {

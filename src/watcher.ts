@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { config } from 'dotenv';
 
 import { analyzeAndApply, getAutoReviewConfig, notify, printUsage } from './automation';
+import { timeFormatted } from './datetime-utils';
 import { envInt } from './env-utils';
 import { loadProjects } from './projects';
 import { listOpenRequests, requestLabel } from './scm';
@@ -141,7 +142,7 @@ function projectStateKey(project: ProjectConfig): string {
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
 function ts(): string {
-  return new Date().toLocaleTimeString('pt-BR');
+  return timeFormatted();
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -181,15 +182,15 @@ async function main(): Promise<void> {
 
   await seedInitialState(projects);
 
-  console.log(`\n[${new Date().toLocaleTimeString('pt-BR')}] ▶  Iniciando primeiro ciclo de verificação...\n`);
+  console.log(`\n[${timeFormatted()}] ▶  Iniciando primeiro ciclo de verificação...\n`);
   await poll(projects);
 
   setInterval(async () => {
     console.log(`\n${'─'.repeat(50)}`);
-    console.log(`[${new Date().toLocaleTimeString('pt-BR')}] ▶  Novo ciclo de verificação`);
+    console.log(`[${timeFormatted()}] ▶  Novo ciclo de verificação`);
     console.log('─'.repeat(50));
     await poll(projects).catch(err =>
-      console.error(`[${new Date().toLocaleTimeString('pt-BR')}] Erro inesperado no poll:`, err),
+      console.error(`[${timeFormatted()}] Erro inesperado no poll:`, err),
     );
     console.log(`\n⏳ Próximo ciclo em ${intervalMin} minuto(s)...`);
   }, intervalMs);

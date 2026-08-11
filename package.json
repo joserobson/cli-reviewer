@@ -6,6 +6,7 @@
   "scripts": {
     "setup": "tsx src/setup.ts",
     "doctor": "tsx src/doctor.ts",
+    "diagnostic": "tsx src/diagnostic.ts",
     "review": "tsx src/index.ts",
     "watch": "tsx src/watcher.ts",
     "webhook": "tsx src/webhook-server.ts",
