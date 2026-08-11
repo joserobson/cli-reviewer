@@ -79,9 +79,6 @@ try {
     for (const p of projects) {
       console.log(`      [${p.platform}/${p.type}] ${p.label}`);
       console.log(`         ID: ${p.id}`);
-      if (p.platform === 'gitlab') {
-        console.log(`         URL: ${p.gitlabUrl ?? 'não definido'}`);
-      }
     }
   }
 } catch (err) {
@@ -150,37 +147,39 @@ for (const { cmd, name } of cliCommands) {
 }
 
 // 7. Verificar conectividade GitLab/GitHub
-console.log('\n7️⃣  CONECTIVIDADE:\n');
+(async () => {
+  console.log('\n7️⃣  CONECTIVIDADE:\n');
 
-const gitlabUrl = process.env.GITLAB_URL;
-const gitlabToken = process.env.GITLAB_TOKEN;
+  const gitlabUrl = process.env.GITLAB_URL;
+  const gitlabToken = process.env.GITLAB_TOKEN;
 
-if (gitlabUrl && gitlabToken) {
-  console.log(`   Testando GitLab: ${gitlabUrl}`);
-  try {
-    const response = await fetch(`${gitlabUrl}/api/v4/user`, {
-      headers: { 'PRIVATE-TOKEN': gitlabToken },
-    });
-    if (response.ok) {
-      const user = await response.json();
-      console.log(`   ✓ GitLab conectado: ${user.name ?? user.username}`);
-    } else {
-      console.log(`   ❌ GitLab retornou erro: ${response.status} ${response.statusText}`);
+  if (gitlabUrl && gitlabToken) {
+    console.log(`   Testando GitLab: ${gitlabUrl}`);
+    try {
+      const response = await fetch(`${gitlabUrl}/api/v4/user`, {
+        headers: { 'PRIVATE-TOKEN': gitlabToken },
+      });
+      if (response.ok) {
+        const user = await response.json();
+        console.log(`   ✓ GitLab conectado: ${user.name ?? user.username}`);
+      } else {
+        console.log(`   ❌ GitLab retornou erro: ${response.status} ${response.statusText}`);
+      }
+    } catch (err) {
+      console.log(`   ❌ Erro ao conectar GitLab: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } catch (err) {
-    console.log(`   ❌ Erro ao conectar GitLab: ${err instanceof Error ? err.message : String(err)}`);
+  } else {
+    console.log(`   ⚠️  GitLab não configurado (GITLAB_URL ou GITLAB_TOKEN ausente)`);
   }
-} else {
-  console.log(`   ⚠️  GitLab não configurado (GITLAB_URL ou GITLAB_TOKEN ausente)`);
-}
 
-console.log('\n═══════════════════════════════════════════════════════════');
-console.log('  DIAGNÓSTICO CONCLUÍDO');
-console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('\n═══════════════════════════════════════════════════════════');
+  console.log('  DIAGNÓSTICO CONCLUÍDO');
+  console.log('═══════════════════════════════════════════════════════════\n');
 
-console.log('💡 PRÓXIMOS PASSOS:\n');
-console.log('   1. Se AUTO_REVIEW_ENABLED=false, habilite no .env');
-console.log('   2. Verifique se o webhook está configurado no GitLab:');
-console.log('      Project → Settings → Webhooks → URL do seu servidor');
-console.log('   3. Teste manualmente enviando um webhook de teste');
-console.log('   4. Monitore os logs com: docker logs -f <container-name>\n');
+  console.log('💡 PRÓXIMOS PASSOS:\n');
+  console.log('   1. Se AUTO_REVIEW_ENABLED=false, habilite no .env');
+  console.log('   2. Verifique se o webhook está configurado no GitLab:');
+  console.log('      Project → Settings → Webhooks → URL do seu servidor');
+  console.log('   3. Teste manualmente enviando um webhook de teste');
+  console.log('   4. Monitore os logs com: docker logs -f <container-name>\n');
+})();
