@@ -1,0 +1,53 @@
+name: nine-router-pilot
+
+services:
+  9router:
+    image: ${NINE_ROUTER_IMAGE}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:20128:20128"
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20128"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
+
+      JWT_SECRET: ${JWT_SECRET}
+      INITIAL_PASSWORD: ${INITIAL_PASSWORD}
+      API_KEY_SECRET: ${API_KEY_SECRET}
+      MACHINE_ID_SALT: ${MACHINE_ID_SALT}
+
+      REQUIRE_API_KEY: "true"
+      ENABLE_REQUEST_LOGS: "false"
+      OBSERVABILITY_ENABLED: "true"
+      AUTH_COOKIE_SECURE: "true"
+
+      BASE_URL: http://127.0.0.1:20128
+      NEXT_PUBLIC_BASE_URL: ${NINE_ROUTER_PUBLIC_URL}
+    volumes:
+      - 9router-pilot-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:20128/api/health')
+          .then(r => { if (!r.ok) process.exit(1) })
+          .catch(() => process.exit(1))
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - default
+      - npm-proxy
+
+volumes:
+  9router-pilot-data:
+    name: nine-router-pilot-data
+
+networks:
+  npm-proxy:
+    external: true
+    name: ${NPM_NETWORK_NAME}
