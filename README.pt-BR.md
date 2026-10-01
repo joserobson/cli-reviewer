@@ -160,7 +160,7 @@ O watcher faz polling no GitLab/GitHub a cada `WATCH_INTERVAL_MINUTES` minutos. 
 Na primeira execução, os MRs já abertos são marcados como "já vistos" e não são re-analisados.
 
 O watcher respeita as flags `AUTO_REVIEW_*`. Por padrão ele ignora Draft MRs, posta comentários, envia notificações desktop e **não** aprova nem faz merge automaticamente.
-Defina `AUTO_REVIEW_ENABLED=true` para permitir que `npm run watch` analise e poste automaticamente; quando estiver `false`, novos MRs são detectados e registrados sem revisão automática.
+O estado de MRs já vistos fica em `.watcher-state.json`, ou em `WATCHER_STATE_PATH` quando definido (a imagem Docker aponta para o volume `cli-reviewer-state`, então recriar o container não refaz o seed nem ignora MRs abertos nesse intervalo). Defina `AUTO_REVIEW_ENABLED=true` para permitir que `npm run watch` analise e poste automaticamente; quando estiver `false`, novos MRs são detectados e registrados sem revisão automática.
 
 ### Servidor de webhook
 

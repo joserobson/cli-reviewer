@@ -3,6 +3,7 @@ FROM node:22-bookworm-slim
 ENV CODEX_HOME=/home/reviewer/.codex
 ENV CLI_REVIEWER_STATE_DIR=/var/lib/cli-reviewer
 ENV WEBHOOK_STATE_PATH=/var/lib/cli-reviewer/webhook-state.json
+ENV WATCHER_STATE_PATH=/var/lib/cli-reviewer/watcher-state.json
 ENV REVIEW_STORE_PATH=/var/lib/cli-reviewer/review-dashboard.json
 ENV LLM_USAGE_STORE_PATH=/var/lib/cli-reviewer/llm-usage.json
 ENV CLAUDE_CONFIG_DIR=/var/lib/cli-reviewer/claude

@@ -160,7 +160,7 @@ The watcher polls GitLab/GitHub every `WATCH_INTERVAL_MINUTES` minutes. When a n
 On first run, existing open MRs are seeded as "already seen" so they are not re-analyzed.
 
 The watcher honors the `AUTO_REVIEW_*` safety switches. By default it ignores Draft MRs, posts comments, sends desktop notifications, and does **not** approve or merge automatically.
-Set `AUTO_REVIEW_ENABLED=true` to let `npm run watch` analyze and post automatically; when it is `false`, new MRs are detected and recorded without automatic review.
+The seen-MR state is stored in `.watcher-state.json`, or in `WATCHER_STATE_PATH` when set (the Docker image points it to the `cli-reviewer-state` volume, so recreating the container does not re-seed and skip MRs opened meanwhile). Set `AUTO_REVIEW_ENABLED=true` to let `npm run watch` analyze and post automatically; when it is `false`, new MRs are detected and recorded without automatic review.
 
 ### Webhook server
 

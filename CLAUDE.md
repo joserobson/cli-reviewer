@@ -72,7 +72,7 @@ Diffs are truncated to 150 lines/file and 700 lines total (`MAX_LINES_PER_FILE`,
 
 ### Docker / deployment
 
-`Dockerfile` installs Codex, Gemini CLI and Claude Code and runs as non-root `reviewer` via `docker-entrypoint.sh` (gosu). State is redirected to `/var/lib/cli-reviewer` with `WEBHOOK_STATE_PATH`, `REVIEW_STORE_PATH`, `LLM_USAGE_STORE_PATH`, `CLAUDE_CONFIG_DIR`. Ports 3333 (webhook) and 3334 (dashboard). Deployment guides live in `docs/deployment/` (9router pilot) and a design spec in `docs/specifications/`.
+`Dockerfile` installs Codex, Gemini CLI and Claude Code and runs as non-root `reviewer` via `docker-entrypoint.sh` (gosu). State is redirected to `/var/lib/cli-reviewer` with `WEBHOOK_STATE_PATH`, `WATCHER_STATE_PATH`, `REVIEW_STORE_PATH`, `LLM_USAGE_STORE_PATH`, `CLAUDE_CONFIG_DIR`. Ports 3333 (webhook) and 3334 (dashboard). Deployment guides live in `docs/deployment/` (9router pilot) and a design spec in `docs/specifications/`.
 
 ## Tests
 

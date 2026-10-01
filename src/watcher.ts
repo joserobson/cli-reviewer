@@ -12,7 +12,7 @@ config();
 
 // ─── Estado persistente ───────────────────────────────────────────────────────
 
-export const STATE_PATH = '.watcher-state.json';
+export const STATE_PATH = process.env.WATCHER_STATE_PATH ?? '.watcher-state.json';
 
 export interface WatcherState {
   seenMrIds: Record<string, number[]>; // projectId → IIDs já analisados
