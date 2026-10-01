@@ -180,7 +180,7 @@ ngrok http 3333
 
 ### Container image
 
-Pushes to `main` and version tags publish `ghcr.io/joserobson/cli-reviewer`. The image contains the Node dependencies and the Codex CLI, runs the application as the unprivileged `reviewer` user, and exposes the webhook on port `3333`.
+Pushes to `master` and version tags publish `ghcr.io/joserobson/cli-reviewer`. The image contains the Node dependencies and the Codex, Gemini and Claude Code CLIs, runs the application as the unprivileged `reviewer` user, and exposes the webhook on port `3333`.
 
 Run it with GitLab configuration supplied at runtime:
 
@@ -202,7 +202,7 @@ docker run --rm -p 3333:3333 \
   ghcr.io/joserobson/cli-reviewer:latest
 ```
 
-For a headless server, authenticate the dedicated Codex volume once with `codex login --device-auth`. `CODEX_HOME` points to `/home/reviewer/.codex`; never bake `auth.json`, GitLab tokens, or webhook secrets into the image.
+For a headless server, authenticate the dedicated Codex volume once with `codex login --device-auth` (Gemini and Claude Code have their own logins; Claude config lives in `/var/lib/cli-reviewer/claude`, inside the state volume). `CODEX_HOME` points to `/home/reviewer/.codex`; never bake `auth.json`, GitLab tokens, or webhook secrets into the image.
 
 When Agent Hub forwards the webhook, it sends `X-AgentHub-Review-Task-Id`. The reviewer reports `running`, `completed`, `failed`, or `skipped` to `AGENT_HUB_CALLBACK_URL/{taskId}/result`, authenticated by `AGENT_HUB_CALLBACK_SECRET`. The `cli-reviewer-state` volume preserves idempotency, review history, and usage data across container recreation. Failed reviews are released for retry, while processing entries older than 30 minutes are considered stale.
 
