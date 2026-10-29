@@ -77,6 +77,7 @@ function mapPullRequest(pr: GitHubPullRequest): MergeRequest {
     changes_count: '0',
     state: pr.state,
     draft: pr.draft ?? false,
+    sha: pr.head.sha,
   };
 }
 

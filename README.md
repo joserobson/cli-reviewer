@@ -150,14 +150,14 @@ Flow:
 npm run watch
 ```
 
-The watcher polls GitLab/GitHub every `WATCH_INTERVAL_MINUTES` minutes. When a new MR/PR is opened:
+The watcher polls GitLab/GitHub every `WATCH_INTERVAL_MINUTES` minutes. When a new MR/PR is opened, or new commits are pushed to an already-seen one (detected by the head commit SHA; edits to title/description do not trigger a new review):
 
 1. Sends a desktop notification
 2. Fetches the diff and runs the analysis automatically
 3. Posts the review as a comment on the MR
 4. Logs usage statistics to the terminal
 
-On first run, existing open MRs are seeded as "already seen" so they are not re-analyzed.
+On first run, existing open MRs are seeded as "already seen" (with their current commit) so they are not re-analyzed. State files created before this feature have no SHAs; the watcher records the current commit on the next cycle without re-analyzing. Each new commit posts a new review comment.
 
 The watcher honors the `AUTO_REVIEW_*` safety switches. By default it ignores Draft MRs, posts comments, sends desktop notifications, and does **not** approve or merge automatically.
 The seen-MR state is stored in `.watcher-state.json`, or in `WATCHER_STATE_PATH` when set (the Docker image points it to the `cli-reviewer-state` volume, so recreating the container does not re-seed and skip MRs opened meanwhile). Set `AUTO_REVIEW_ENABLED=true` to let `npm run watch` analyze and post automatically; when it is `false`, new MRs are detected and recorded without automatic review.

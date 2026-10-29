@@ -22,6 +22,7 @@ export interface MergeRequest {
   changes_count: string;
   state: string;
   draft: boolean;
+  sha?: string; // SHA do último commit (head); muda a cada novo push
 }
 
 export interface FileChange {
